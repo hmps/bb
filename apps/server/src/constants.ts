@@ -1,4 +1,14 @@
 export const COMMAND_TIMEOUT_MS = 30_000;
+/**
+ * Outer timeout for the `provider.list_models` host RPC. The daemon's inner
+ * JSON-RPC timeout is 30s (`runtime-json-rpc.ts` default and
+ * `MODEL_LIST_TIMEOUT_MS` in the ACP bridge), and a model-list request can
+ * absorb a shell-env refresh plus a provider-maintenance runtime
+ * respawn/teardown plus one retry on top of that inner timeout. The outer
+ * budget must stay strictly larger than the inner one, or the server returns
+ * `command_timeout` before the daemon's own retry has a chance to succeed.
+ */
+export const PROVIDER_MODEL_TIMEOUT_MS = 60_000;
 export const HEARTBEAT_INTERVAL_MS = 5_000;
 export const LEASE_TIMEOUT_MS = 30_000;
 export const DAEMON_DISCONNECT_GRACE_MS = 5_000;

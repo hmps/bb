@@ -22,7 +22,10 @@ import {
 } from "@bb/domain";
 import { normalizeHostDaemonAcpLaunchSpec } from "@bb/host-daemon-contract";
 import type { LoggedWorkSessionDeps } from "../../types.js";
-import { COMMAND_TIMEOUT_MS } from "../../constants.js";
+import {
+  COMMAND_TIMEOUT_MS,
+  PROVIDER_MODEL_TIMEOUT_MS,
+} from "../../constants.js";
 import { ApiError } from "../../errors.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
 import { getHostPermissionCeiling } from "../hosts/permission-ceiling.js";
@@ -515,7 +518,7 @@ async function loadSystemProviderModels(
       deps,
       {
         hostId,
-        timeoutMs: COMMAND_TIMEOUT_MS,
+        timeoutMs: PROVIDER_MODEL_TIMEOUT_MS,
         command: {
           type: "provider.list_models",
           providerId: provider.id,
