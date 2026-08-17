@@ -68,7 +68,7 @@ interface SessionState {
 const INTERACTIVE_INTERRUPT_RETRY_DELAY_MS = 1_000;
 const IDLE_PROVIDER_SESSION_REAP_AFTER_MS = 30 * 60 * 1000;
 const IDLE_PROVIDER_SESSION_REAP_INTERVAL_MS = 5 * 60 * 1000;
-const RUNTIME_SHELL_ENV_REFRESH_TTL_MS = 10_000;
+const RUNTIME_SHELL_ENV_REFRESH_TTL_MS = 5 * 60 * 1000;
 
 type RuntimeShellEnv = NonNullable<AgentRuntimeOptions["shellEnv"]>;
 
@@ -683,6 +683,7 @@ export async function createHostDaemonApp(
             RUNTIME_SHELL_ENV_REFRESH_TTL_MS,
           promise: Promise.resolve(runtimeManager.getShellEnv()),
         };
+  let shellEnvReplacementCount = 0;
   const refreshRuntimeShellEnv = async () => {
     if (!options.resolveRuntimeShellEnv) {
       return runtimeManager.getShellEnv();
@@ -700,7 +701,18 @@ export async function createHostDaemonApp(
       if (shellEnv === undefined) {
         return runtimeManager.getShellEnv();
       }
-      await runtimeManager.replaceBaseShellEnv(shellEnv);
+      const replacement = await runtimeManager.replaceBaseShellEnv(shellEnv);
+      if (replacement.replaced) {
+        shellEnvReplacementCount += 1;
+        // Keys only: shell env values can carry secrets.
+        options.logger.debug(
+          {
+            changedKeys: replacement.changedKeys,
+            shellEnvReplacementCount,
+          },
+          "Runtime shell env changed; replacing provider maintenance runtime",
+        );
+      }
       return runtimeManager.getShellEnv();
     })();
     const entry = {
@@ -760,10 +772,10 @@ export async function createHostDaemonApp(
     terminalManager,
     listModels: async (args) => {
       await refreshRuntimeShellEnv();
-      const runtime = await runtimeManager.ensureProviderMaintenanceRuntime({
-        dataDir: options.dataDir,
-      });
-      return runtime.listModels(args);
+      return runtimeManager.runProviderMaintenanceOperation(
+        { dataDir: options.dataDir },
+        (runtime) => runtime.listModels(args),
+      );
     },
     resolveInteractiveRequest: async (request) => {
       interactiveRequestRegistry.resolve(request);

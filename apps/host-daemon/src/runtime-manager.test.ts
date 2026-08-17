@@ -43,6 +43,9 @@ type SteerTurnArgs = Parameters<AgentRuntime["steerTurn"]>[0];
 type StopThreadArgs = Parameters<AgentRuntime["stopThread"]>[0];
 type RenameThreadArgs = Parameters<AgentRuntime["renameThread"]>[0];
 type ListModelsArgs = Parameters<AgentRuntime["listModels"]>[0];
+type FakeListModelsResult = Awaited<
+  ReturnType<ReturnType<typeof createFakeRuntime>["listModels"]>
+>;
 interface RunGitOptions {
   cwd: string;
 }
@@ -1357,6 +1360,172 @@ describe("RuntimeManager", () => {
     expect(managerInternals.providerMaintenanceRuntime).toBe(currentRuntime);
     expect(staleRuntime.shutdown).toHaveBeenCalledTimes(1);
     expect(currentRuntime.shutdown).not.toHaveBeenCalled();
+  });
+
+  it("completes an in-flight provider maintenance operation when base shell env is replaced", async () => {
+    const dataDir = await makeTempDir("bb-provider-maintenance-handoff-");
+    const firstRuntime = createFakeRuntime();
+    const secondRuntime = createFakeRuntime();
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(firstRuntime)
+      .mockReturnValueOnce(secondRuntime);
+    const manager = new RuntimeManager({
+      createRuntime,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+    const listing = createDeferred<FakeListModelsResult>();
+    firstRuntime.listModels.mockReturnValueOnce(listing.promise);
+
+    const operation = manager.runProviderMaintenanceOperation(
+      { dataDir },
+      (runtime) => runtime.listModels({ providerId: "cursor" }),
+    );
+    await vi.waitFor(() => {
+      expect(firstRuntime.listModels).toHaveBeenCalledTimes(1);
+    });
+
+    await manager.replaceBaseShellEnv({
+      PATH: "/new/bin:/usr/bin",
+    });
+
+    // The replaced runtime stays alive while it still serves the RPC, but new
+    // callers already get the fresh one.
+    expect(firstRuntime.shutdown).not.toHaveBeenCalled();
+    await expect(
+      manager.ensureProviderMaintenanceRuntime({ dataDir }),
+    ).resolves.toBe(secondRuntime);
+
+    listing.resolve({ models: [], selectedOnlyModels: [] });
+    await expect(operation).resolves.toEqual({
+      models: [],
+      selectedOnlyModels: [],
+    });
+    await vi.waitFor(() => {
+      expect(firstRuntime.shutdown).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("retries a provider maintenance operation once on a fresh runtime after Runtime shutting down", async () => {
+    const dataDir = await makeTempDir("bb-provider-maintenance-retry-");
+    const firstRuntime = createFakeRuntime();
+    const secondRuntime = createFakeRuntime();
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(firstRuntime)
+      .mockReturnValueOnce(secondRuntime);
+    const manager = new RuntimeManager({
+      createRuntime,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+
+    const attempts: AgentRuntime[] = [];
+    const result = await manager.runProviderMaintenanceOperation(
+      { dataDir },
+      async (runtime) => {
+        attempts.push(runtime);
+        if (attempts.length === 1) {
+          await manager.replaceBaseShellEnv({ PATH: "/new/bin:/usr/bin" });
+          throw new Error("Runtime shutting down");
+        }
+        return "listed";
+      },
+    );
+
+    expect(result).toBe("listed");
+    expect(attempts).toEqual([firstRuntime, secondRuntime]);
+  });
+
+  it("does not retry a provider maintenance operation that fails on the current runtime", async () => {
+    const dataDir = await makeTempDir("bb-provider-maintenance-no-retry-");
+    const runtime = createFakeRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+
+    let attempts = 0;
+    await expect(
+      manager.runProviderMaintenanceOperation({ dataDir }, async () => {
+        attempts += 1;
+        throw new Error("Runtime shutting down");
+      }),
+    ).rejects.toThrow("Runtime shutting down");
+    expect(attempts).toBe(1);
+  });
+
+  it("shuts down a handed-off provider maintenance runtime after the drain timeout", async () => {
+    const dataDir = await makeTempDir("bb-provider-maintenance-drain-");
+    const firstRuntime = createFakeRuntime();
+    const secondRuntime = createFakeRuntime();
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(firstRuntime)
+      .mockReturnValueOnce(secondRuntime);
+    const manager = new RuntimeManager({
+      createRuntime,
+      providerMaintenanceDrainTimeoutMs: 20,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+    const listing = createDeferred<FakeListModelsResult>();
+    firstRuntime.listModels.mockReturnValueOnce(listing.promise);
+
+    const operation = manager.runProviderMaintenanceOperation(
+      { dataDir },
+      (runtime) => runtime.listModels({ providerId: "cursor" }),
+    );
+    await vi.waitFor(() => {
+      expect(firstRuntime.listModels).toHaveBeenCalledTimes(1);
+    });
+
+    await manager.replaceBaseShellEnv({ PATH: "/new/bin:/usr/bin" });
+    expect(firstRuntime.shutdown).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => {
+      expect(firstRuntime.shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    listing.resolve({ models: [], selectedOnlyModels: [] });
+    await operation;
+  });
+
+  it("shuts down a handed-off provider maintenance runtime without waiting out the drain on shutdownAll", async () => {
+    const dataDir = await makeTempDir("bb-provider-maintenance-drain-all-");
+    const firstRuntime = createFakeRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: vi.fn().mockReturnValueOnce(firstRuntime),
+      providerMaintenanceDrainTimeoutMs: 60_000,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+    const listing = createDeferred<FakeListModelsResult>();
+    firstRuntime.listModels.mockReturnValueOnce(listing.promise);
+
+    const operation = manager.runProviderMaintenanceOperation(
+      { dataDir },
+      (runtime) => runtime.listModels({ providerId: "cursor" }),
+    );
+    await vi.waitFor(() => {
+      expect(firstRuntime.listModels).toHaveBeenCalledTimes(1);
+    });
+
+    await manager.replaceBaseShellEnv({ PATH: "/new/bin:/usr/bin" });
+    expect(firstRuntime.shutdown).not.toHaveBeenCalled();
+
+    await manager.shutdownAll();
+    expect(firstRuntime.shutdown).toHaveBeenCalledTimes(1);
+
+    listing.resolve({ models: [], selectedOnlyModels: [] });
+    await operation;
   });
 
   it("evicts idle environment runtimes after base shell env changes", async () => {

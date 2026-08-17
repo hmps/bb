@@ -47,6 +47,14 @@ type StopWatching = () => void | Promise<void>;
 const STOP_WATCHING: StopWatching = () => undefined;
 const PROVIDER_MAINTENANCE_WORKSPACE_DIR = "provider-maintenance-workspace";
 const PROVIDER_PROCESS_EXIT_DETAIL_MAX_LENGTH = 4000;
+/**
+ * Upper bound on how long a detached provider-maintenance runtime stays alive
+ * for its in-flight RPCs. It matches the default JSON-RPC request timeout, so
+ * a stuck call cannot keep a replaced runtime process alive past its own
+ * deadline.
+ */
+const PROVIDER_MAINTENANCE_DRAIN_TIMEOUT_MS = 30_000;
+const RUNTIME_SHUTTING_DOWN_MESSAGE = "Runtime shutting down";
 
 interface RuntimeSkillConfig {
   catalogHash: string;
@@ -193,6 +201,8 @@ export interface RuntimeManagerOptions {
   fetchSkillTree?: FetchSkillTree;
   hostWatcher?: HostWatcher;
   logger?: Pick<Logger, "debug" | "warn">;
+  /** Test seam for the detached provider-maintenance drain bound. */
+  providerMaintenanceDrainTimeoutMs?: number;
   provisionWorkspace?: (
     options: ProvisionWorkspaceArgs,
   ) => Promise<HostWorkspace>;
@@ -259,21 +269,37 @@ interface PendingProviderMaintenanceRuntime {
   promise: Promise<AgentRuntime>;
 }
 
+export interface ReplaceBaseShellEnvResult {
+  /** Base shell env keys that were added, removed, or changed. */
+  changedKeys: string[];
+  replaced: boolean;
+}
+
 interface RunCancellableEnvironmentProvisionArgs {
   environmentId: string;
   work: (signal: AbortSignal) => Promise<void>;
 }
 
-function shellEnvEquals(
+/** Keys that were added, removed, or changed between two shell envs. */
+function changedShellEnvKeys(
   left: NonNullable<AgentRuntimeOptions["shellEnv"]>,
   right: NonNullable<AgentRuntimeOptions["shellEnv"]>,
-): boolean {
-  const leftEntries = Object.entries(left);
-  const rightEntries = Object.entries(right);
-  if (leftEntries.length !== rightEntries.length) {
-    return false;
-  }
-  return leftEntries.every(([key, value]) => right[key] === value);
+): string[] {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return [...keys].filter((key) => left[key] !== right[key]);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
+}
+
+function isRuntimeShuttingDownError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message === RUNTIME_SHUTTING_DOWN_MESSAGE
+  );
 }
 
 function providerProcessEnvFromShellEnv(
@@ -319,6 +345,12 @@ export class RuntimeManager {
   private pendingProviderMaintenanceRuntime: PendingProviderMaintenanceRuntime | null =
     null;
   private providerMaintenanceRuntimeGeneration = 0;
+  private readonly inFlightProviderMaintenanceOperations = new Map<
+    AgentRuntime,
+    Set<Promise<void>>
+  >();
+  private readonly providerMaintenanceHandoffs = new Set<Promise<void>>();
+  private readonly providerMaintenanceDrainAborts = new Set<() => void>();
   private managedShellEnv: NonNullable<AgentRuntimeOptions["shellEnv"]> = {};
   private stopWatchingDataDirSkillsRoot: StopWatching = STOP_WATCHING;
 
@@ -622,14 +654,16 @@ export class RuntimeManager {
 
   async replaceBaseShellEnv(
     shellEnv: NonNullable<AgentRuntimeOptions["shellEnv"]>,
-  ): Promise<void> {
-    if (shellEnvEquals(this.baseShellEnv, shellEnv)) {
-      return;
+  ): Promise<ReplaceBaseShellEnvResult> {
+    const changedKeys = changedShellEnvKeys(this.baseShellEnv, shellEnv);
+    if (changedKeys.length === 0) {
+      return { changedKeys, replaced: false };
     }
 
     this.baseShellEnv = { ...shellEnv };
     await this.shutdownProviderMaintenanceRuntime();
     await this.evictIdleRuntimeEntries();
+    return { changedKeys, replaced: true };
   }
 
   private getInjectedSkillsLogger(): InjectedSkillsLogger | undefined {
@@ -826,9 +860,11 @@ export class RuntimeManager {
   }
 
   /**
-   * Tears down the resident provider-maintenance runtime so the next caller
-   * gets a fresh one. In-flight maintenance RPCs fail with "Runtime shutting
-   * down" and are expected to retry; callers refetch after invalidation.
+   * Detaches the resident provider-maintenance runtime so the next caller gets
+   * a fresh one. A runtime with in-flight maintenance RPCs is handed off: it
+   * stays alive until those RPCs settle (bounded by the drain timeout) and is
+   * shut down afterwards, so an invalidation never fails a call that is
+   * already talking to the old runtime.
    */
   async invalidateProviderMaintenanceRuntime(): Promise<void> {
     try {
@@ -838,6 +874,57 @@ export class RuntimeManager {
         { err: error },
         "Failed to shut down provider maintenance runtime during invalidation",
       );
+    }
+  }
+
+  /**
+   * Runs a maintenance RPC against the provider-maintenance runtime and holds
+   * that runtime open for the duration. If the runtime is replaced mid-call
+   * anyway — a shutdown started before the operation registered — the call is
+   * retried once on the fresh runtime instead of surfacing the internal
+   * "Runtime shutting down" failure to the server.
+   */
+  async runProviderMaintenanceOperation<T>(
+    args: { dataDir: string },
+    operation: (runtime: AgentRuntime) => Promise<T>,
+  ): Promise<T> {
+    const runtime = await this.ensureProviderMaintenanceRuntime(args);
+    try {
+      return await this.trackProviderMaintenanceOperation(runtime, operation);
+    } catch (error) {
+      if (
+        !isRuntimeShuttingDownError(error) ||
+        this.providerMaintenanceRuntime === runtime
+      ) {
+        throw error;
+      }
+      const freshRuntime = await this.ensureProviderMaintenanceRuntime(args);
+      return this.trackProviderMaintenanceOperation(freshRuntime, operation);
+    }
+  }
+
+  private async trackProviderMaintenanceOperation<T>(
+    runtime: AgentRuntime,
+    operation: (runtime: AgentRuntime) => Promise<T>,
+  ): Promise<T> {
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const operations =
+      this.inFlightProviderMaintenanceOperations.get(runtime) ??
+      new Set<Promise<void>>();
+    operations.add(completion);
+    this.inFlightProviderMaintenanceOperations.set(runtime, operations);
+
+    try {
+      return await operation(runtime);
+    } finally {
+      operations.delete(completion);
+      if (operations.size === 0) {
+        this.inFlightProviderMaintenanceOperations.delete(runtime);
+      }
+      resolveCompletion();
     }
   }
 
@@ -860,10 +947,79 @@ export class RuntimeManager {
       this.providerMaintenanceRuntime = null;
     }
 
-    const runtimes = [...new Set([existingRuntime, resolvedPendingRuntime])];
-    await Promise.all(
-      runtimes.map((runtime) => runtime?.shutdown() ?? Promise.resolve()),
+    const runtimes = [...new Set([existingRuntime, resolvedPendingRuntime])]
+      .flatMap((runtime) => (runtime ? [runtime] : []));
+
+    // The field is already cleared, so the next caller creates a fresh runtime
+    // immediately. A runtime that still serves maintenance RPCs is handed off
+    // to a background drain rather than shut down under those calls; an idle
+    // one shuts down inline so teardown stays synchronous for its caller.
+    const busyRuntimes = runtimes.filter((runtime) =>
+      this.inFlightProviderMaintenanceOperations.has(runtime),
     );
+    for (const runtime of busyRuntimes) {
+      this.startProviderMaintenanceHandoff(runtime);
+    }
+    await Promise.all(
+      runtimes
+        .filter((runtime) => !busyRuntimes.includes(runtime))
+        .map((runtime) => runtime.shutdown()),
+    );
+  }
+
+  private startProviderMaintenanceHandoff(runtime: AgentRuntime): void {
+    const handoff = this.drainThenShutdownProviderMaintenanceRuntime(runtime)
+      .catch((error: unknown) => {
+        this.options.logger?.warn(
+          { err: error },
+          "Failed to shut down handed-off provider maintenance runtime",
+        );
+      })
+      .finally(() => {
+        this.providerMaintenanceHandoffs.delete(handoff);
+      });
+    this.providerMaintenanceHandoffs.add(handoff);
+  }
+
+  private async drainThenShutdownProviderMaintenanceRuntime(
+    runtime: AgentRuntime,
+  ): Promise<void> {
+    let abortDrain!: () => void;
+    const aborted = new Promise<void>((resolve) => {
+      abortDrain = resolve;
+    });
+    this.providerMaintenanceDrainAborts.add(abortDrain);
+    try {
+      await Promise.race([
+        this.drainProviderMaintenanceOperations(runtime),
+        delay(
+          this.options.providerMaintenanceDrainTimeoutMs ??
+            PROVIDER_MAINTENANCE_DRAIN_TIMEOUT_MS,
+        ),
+        aborted,
+      ]);
+    } finally {
+      this.providerMaintenanceDrainAborts.delete(abortDrain);
+    }
+    this.inFlightProviderMaintenanceOperations.delete(runtime);
+    await runtime.shutdown();
+  }
+
+  private async drainProviderMaintenanceOperations(
+    runtime: AgentRuntime,
+  ): Promise<void> {
+    // A retry can register against this runtime while an earlier operation
+    // settles, so drain until the set is empty. Each pass awaits real
+    // completions, so this cannot spin.
+    for (;;) {
+      const pending = [
+        ...(this.inFlightProviderMaintenanceOperations.get(runtime) ?? []),
+      ];
+      if (pending.length === 0) {
+        return;
+      }
+      await Promise.all(pending);
+    }
   }
 
   private async evictIdleRuntimeEntries(): Promise<void> {
@@ -1204,6 +1360,12 @@ export class RuntimeManager {
       // should only release in-memory state and stop provider processes.
     }
     await this.shutdownProviderMaintenanceRuntime();
+    // Handed-off maintenance runtimes still own a provider process; daemon
+    // shutdown must not leave one behind, and must not wait out their drain.
+    for (const abortDrain of this.providerMaintenanceDrainAborts) {
+      abortDrain();
+    }
+    await Promise.all([...this.providerMaintenanceHandoffs]);
     await this.stopWatchingDataDirSkillsRoot();
     this.stopWatchingDataDirSkillsRoot = STOP_WATCHING;
     await this.cleanupUnusedInjectedSkillStagingDirs([]);

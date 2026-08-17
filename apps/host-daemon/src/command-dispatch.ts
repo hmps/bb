@@ -523,15 +523,15 @@ const commandHandlers: CommandHandlerMap = {
     return {};
   },
   "thread.unarchive": async (command, options) => {
-    const runtime =
-      await options.runtimeManager.ensureProviderMaintenanceRuntime({
-        dataDir: options.dataDir,
-      });
-    await runtime.unarchiveThread({
-      threadId: command.threadId,
-      providerId: command.providerId,
-      providerThreadId: command.providerThreadId,
-    });
+    await options.runtimeManager.runProviderMaintenanceOperation(
+      { dataDir: options.dataDir },
+      (runtime) =>
+        runtime.unarchiveThread({
+          threadId: command.threadId,
+          providerId: command.providerId,
+          providerThreadId: command.providerThreadId,
+        }),
+    );
     return {};
   },
   "interactive.resolve": resolveInteractiveRequest,

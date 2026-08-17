@@ -69,6 +69,8 @@ type StartIdleProviderSessionReaperArgsForTest = Parameters<
   typeof startIdleProviderSessionReaper
 >[0];
 
+type ModelListResult = Awaited<ReturnType<AgentRuntime["listModels"]>>;
+
 const tempDirs: string[] = [];
 
 function createLogger() {
@@ -496,6 +498,112 @@ describe("createHostDaemonApp", () => {
       });
       expect(resolveRuntimeShellEnv).toHaveBeenCalledTimes(1);
       expect(listModels).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.daemon.shutdown("test");
+    }
+  });
+
+  it("keeps an in-flight model listing alive across a shell env replacement", async () => {
+    const dataDir = await makeTempDir("bb-host-daemon-app-models-race-");
+    const fetchRecorder = createFetchRecorder();
+    const logger = createLogger();
+    let now = 1_000;
+    let resolvedEnvCount = 0;
+    // A dynamic shell (mise, asdf) can hand back a different env on every
+    // resolve, so every refresh past the TTL replaces the base shell env.
+    const resolveRuntimeShellEnv = vi.fn(async () => {
+      resolvedEnvCount += 1;
+      return {
+        PATH: resolvedEnvCount % 2 === 1 ? "/a/bin" : "/b/bin",
+      };
+    });
+    const firstListing = createDeferred<ModelListResult>();
+    const queuedListings: Array<Deferred<ModelListResult>> = [firstListing];
+    const listModels = vi.fn<AgentRuntime["listModels"]>();
+    // Mirrors the real runtime: shutdown rejects every open RPC with
+    // "Runtime shutting down".
+    const createRaceRuntime = (): AgentRuntime => {
+      const openListings = new Set<Deferred<ModelListResult>>();
+      return {
+        ...createFakeRuntime(),
+        async listModels(args) {
+          listModels(args);
+          const queued = queuedListings.shift();
+          if (!queued) {
+            return { models: [], selectedOnlyModels: [] };
+          }
+          openListings.add(queued);
+          try {
+            return await queued.promise;
+          } finally {
+            openListings.delete(queued);
+          }
+        },
+        async shutdown() {
+          for (const listing of openListings) {
+            listing.reject(new Error("Runtime shutting down"));
+          }
+          openListings.clear();
+        },
+      };
+    };
+    const app = await createHostDaemonApp({
+      dataDir,
+      serverUrl: "http://127.0.0.1:3334",
+      hostKey: "host-key-app-test",
+      hostType: "persistent",
+      hostId: "host-app-test",
+      hostName: "App Test Host",
+      instanceId: "instance-app-test",
+      logger,
+      releaseLock: async () => undefined,
+      localApiConfig: null,
+      runtimeShellEnv: {
+        PATH: "/startup/bin:/usr/bin",
+      },
+      resolveRuntimeShellEnv,
+      nowMs: () => now,
+      createRuntime: () => createRaceRuntime(),
+      fetchFn: fetchRecorder.fetchFn,
+      createWebSocket: createOpeningWebSocket(),
+    });
+
+    try {
+      const firstResponse = app.router.handleOnlineRpcRequest({
+        type: "host-rpc.request",
+        requestId: "provider-models-race-first",
+        command: {
+          type: "provider.list_models",
+          providerId: "cursor",
+        },
+      });
+      await vi.waitFor(() => {
+        expect(listModels).toHaveBeenCalledTimes(1);
+      });
+
+      // Expire the refresh TTL so the second request replaces the shell env
+      // and the provider maintenance runtime while the first call is open.
+      now += 10 * 60 * 1000;
+      await expect(
+        app.router.handleOnlineRpcRequest({
+          type: "host-rpc.request",
+          requestId: "provider-models-race-second",
+          command: {
+            type: "provider.list_models",
+            providerId: "cursor",
+          },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(resolveRuntimeShellEnv).toHaveBeenCalledTimes(2);
+
+      firstListing.resolve({ models: [], selectedOnlyModels: [] });
+      await expect(firstResponse).resolves.toMatchObject({
+        ok: true,
+        result: {
+          models: [],
+          selectedOnlyModels: [],
+        },
+      });
     } finally {
       await app.daemon.shutdown("test");
     }
