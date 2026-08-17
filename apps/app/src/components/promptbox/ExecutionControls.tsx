@@ -30,6 +30,8 @@ export interface ExecutionModelConfig {
   isLoading: boolean;
   loadFailed: boolean;
   loadError?: SystemExecutionOptionsModelLoadError | null;
+  /** Re-runs the owner's execution-options query after a model load failure. */
+  onRetryLoad?: () => void;
   onChange: (value: string) => void;
 }
 
@@ -112,6 +114,7 @@ export const ExecutionControls = memo(function ExecutionControls({
           modelIsLoading={model.isLoading}
           modelLoadFailed={model.loadFailed}
           modelLoadError={model.loadError}
+          onRetryModelLoad={model.onRetryLoad}
           onModelChange={model.onChange}
           formatModelLabel={formatModelLabel}
           reasoningValue={reasoning.value}

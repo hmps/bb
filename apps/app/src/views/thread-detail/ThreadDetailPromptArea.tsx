@@ -569,6 +569,7 @@ export function ThreadDetailPromptArea({
     isLoadingModels,
     modelLoadFailed,
     modelLoadError,
+    retryModelLoad,
     reasoningOptions,
     permissionModeOptions,
     supportsPermissionModeSelection,
@@ -1062,6 +1063,7 @@ export function ThreadDetailPromptArea({
         isLoading: isLoadingModels,
         loadFailed: modelLoadFailed,
         loadError: modelLoadError,
+        onRetryLoad: retryModelLoad,
         onChange: handleModelChange,
       },
       serviceTier: {
@@ -1094,6 +1096,7 @@ export function ThreadDetailPromptArea({
       providerOptions,
       reasoningLevel,
       reasoningOptions,
+      retryModelLoad,
       selectedModel,
       selectedProviderDisplayName,
       selectedProviderId,

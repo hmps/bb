@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import type { AvailableModel, ReasoningLevel } from "@bb/domain";
 import type {
+  SystemExecutionOptionsModelLoadError,
   SystemExecutionOptionsResponse,
   SystemProvidersQuery,
 } from "@bb/server-contract";
@@ -152,6 +153,9 @@ function renderPicker({
   selectedProviderId = "codex",
   compact = false,
   splitPane = false,
+  modelLoadError,
+  modelLoadFailed = false,
+  onRetryModelLoad,
 }: {
   onSelectedProviderChange?: ((value: string) => void) | null;
   onModelChange?: (value: string) => void;
@@ -167,6 +171,9 @@ function renderPicker({
   selectedProviderId?: string;
   compact?: boolean;
   splitPane?: boolean;
+  modelLoadError?: SystemExecutionOptionsModelLoadError | null;
+  modelLoadFailed?: boolean;
+  onRetryModelLoad?: () => void;
 } = {}) {
   const { queryClient, wrapper } = createQueryClientTestHarness();
   queryClient.setQueryData(
@@ -198,6 +205,9 @@ function renderPicker({
         modelOptions={modelOptions}
         moreModelOptions={moreModelOptions}
         onModelChange={onModelChange}
+        modelLoadError={modelLoadError}
+        modelLoadFailed={modelLoadFailed}
+        onRetryModelLoad={onRetryModelLoad}
         reasoningValue={reasoningValue}
         reasoningOptions={pickerReasoningOptions}
         onReasoningChange={onReasoningChange}
@@ -311,6 +321,41 @@ describe("ModelReasoningPicker", () => {
       ).toBe(true);
     });
     expect(screen.getByRole("dialog")).not.toBeNull();
+  });
+
+  it("offers a retry action next to a provider model load error", () => {
+    const onRetryModelLoad = vi.fn();
+    renderPicker({
+      modelOptions: [],
+      modelValue: "",
+      modelLoadError: { code: "timeout", providerId: "codex" },
+      onRetryModelLoad,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+
+    expect(
+      screen.getByText("Timed out loading models for Codex."),
+    ).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetryModelLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the retry action when no retry handler is supplied", () => {
+    renderPicker({
+      modelOptions: [],
+      modelValue: "",
+      modelLoadError: { code: "timeout", providerId: "codex" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+
+    expect(
+      screen.getByText("Timed out loading models for Codex."),
+    ).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("cycles the provider while the picker popover is open", () => {

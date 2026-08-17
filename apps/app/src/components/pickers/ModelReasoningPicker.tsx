@@ -215,6 +215,13 @@ interface ModelReasoningPickerProps {
   modelIsLoading?: boolean;
   modelLoadFailed?: boolean;
   modelLoadError?: SystemExecutionOptionsModelLoadError | null;
+  /**
+   * Re-runs the owner's execution-options query. Omit when the caller has no
+   * query to re-run — the retry action then stays hidden instead of rendering a
+   * button that cannot recover anything. While previewing another provider the
+   * picker retries its own preview query instead.
+   */
+  onRetryModelLoad?: () => void;
   onModelChange: (value: string) => void;
   /**
    * Optional case-normaliser for raw model names returned during a provider
@@ -270,6 +277,7 @@ export function ModelReasoningPicker({
   modelIsLoading = false,
   modelLoadFailed = false,
   modelLoadError,
+  onRetryModelLoad,
   onModelChange,
   formatModelLabel,
   reasoningValue,
@@ -469,6 +477,18 @@ export function ModelReasoningPicker({
     activeModelLoadErrorMatches && activeModelLoadError !== null;
   const isShowingModelError =
     !activeModelIsLoading && !hasActiveModelOptions && activeModelLoadFailed;
+  // While previewing, the catalog on screen comes from the picker's own query,
+  // so that is the one to re-run. Otherwise the owner of the execution-options
+  // query refetches it. Without either, there is nothing to retry.
+  const previewRefetch = previewQuery.refetch;
+  const canRetryModelLoad = isPreviewing || onRetryModelLoad !== undefined;
+  const handleRetryModelLoad = useCallback(() => {
+    if (isPreviewing) {
+      void previewRefetch();
+      return;
+    }
+    onRetryModelLoad?.();
+  }, [isPreviewing, onRetryModelLoad, previewRefetch]);
   const showProviderTabs =
     hasMultipleProviders &&
     onSelectedProviderChange !== undefined &&
@@ -1076,6 +1096,19 @@ export function ModelReasoningPicker({
                 ) : (
                   "No models available"
                 )}
+                {activeModelLoadFailed && canRetryModelLoad ? (
+                  <div className="mt-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={handleRetryModelLoad}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>

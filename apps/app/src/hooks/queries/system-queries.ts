@@ -57,6 +57,7 @@ interface QueryOptions {
   enabled?: boolean;
 }
 
+const SYSTEM_EXECUTION_OPTIONS_STALE_TIME_MS = 60_000;
 const SYSTEM_EXECUTION_OPTIONS_RETRY_DELAY_MS = 250;
 const SYSTEM_EXECUTION_OPTIONS_RETRY_COUNT = 1;
 const CLAUDE_CODE_PROVIDER_ID = "claude-code";
@@ -149,7 +150,15 @@ export function useSystemExecutionOptions(
       return response;
     },
     enabled,
-    staleTime: 60_000,
+    // A `modelLoadError` payload is a degraded answer, not a catalog. Keeping it
+    // fresh for a minute would pin the composer to "Timed out loading models"
+    // long after the host recovered, and would make an explicit retry a no-op.
+    // Marking it stale immediately lets the next mount, refocus, or `refetch()`
+    // probe again, while a verified catalog keeps the normal freshness window.
+    staleTime: (query) =>
+      query.state.data?.modelLoadError
+        ? 0
+        : SYSTEM_EXECUTION_OPTIONS_STALE_TIME_MS,
     retry: shouldRetrySystemExecutionOptions,
     retryDelay: SYSTEM_EXECUTION_OPTIONS_RETRY_DELAY_MS,
     ...(isClaudeCode

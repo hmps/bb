@@ -483,6 +483,7 @@ export function NewThreadComposer({
     permissionModeOptions,
     providerOptions,
     reasoningLevel,
+    retryModelLoad,
     reasoningOptions,
     selectedModel,
     selectedProviderComposerActions,
@@ -1259,6 +1260,7 @@ export function NewThreadComposer({
               isLoading: isLoadingModels,
               loadFailed: modelLoadFailed,
               loadError: modelLoadError,
+              onRetryLoad: retryModelLoad,
               onChange: handleModelChange,
             },
             serviceTier: {
@@ -1327,6 +1329,7 @@ export function NewThreadComposer({
       reasoningLevel,
       reasoningOptions,
       remoteBranchOptions,
+      retryModelLoad,
       reuseEnvironmentId,
       reuseThreadOptions,
       selectedBranch,

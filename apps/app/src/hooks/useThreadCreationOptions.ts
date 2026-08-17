@@ -108,6 +108,8 @@ export interface UseThreadCreationOptionsResult<TExecutionInputSources> {
   isResolvingInitialProvider: boolean;
   modelLoadFailed: boolean;
   modelLoadError: SystemExecutionOptionsModelLoadError | null;
+  /** Re-runs the execution-options query so a failed model load can recover. */
+  retryModelLoad: () => void;
   reasoningOptions: PickerOption<ReasoningLevel>[];
   permissionModeOptions: PickerOption<PermissionMode>[];
   supportsPermissionModeSelection: boolean;
@@ -322,6 +324,10 @@ export function useThreadCreationOptions(
     executionOptionsQuery.data?.modelLoadError ?? NO_MODEL_LOAD_ERROR;
   const modelLoadFailed =
     executionOptionsQuery.isError || modelLoadError !== null;
+  const refetchExecutionOptions = executionOptionsQuery.refetch;
+  const retryModelLoad = useCallback(() => {
+    void refetchExecutionOptions();
+  }, [refetchExecutionOptions]);
   // Preloaded placeholder rows and the server's probe-failure fallback are both
   // provisional catalogs. Only a successful probe proves a stored model is gone,
   // so recovery is gated on the catalog being verified. Placeholder data is not
@@ -965,6 +971,7 @@ export function useThreadCreationOptions(
     isResolvingInitialProvider,
     modelLoadFailed,
     modelLoadError,
+    retryModelLoad,
     reasoningOptions,
     permissionModeOptions,
     supportsPermissionModeSelection,

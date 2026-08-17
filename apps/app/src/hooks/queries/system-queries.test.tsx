@@ -137,6 +137,61 @@ describe("useSystemExecutionOptions", () => {
     });
   });
 
+  it("treats a model load error payload as immediately stale", async () => {
+    const errorResponse: SystemExecutionOptionsResponse = {
+      ...EXECUTION_OPTIONS_RESPONSE,
+      modelLoadError: { code: "timeout", providerId: "codex" },
+    };
+    vi.mocked(sdk.system.executionOptions).mockResolvedValue(errorResponse);
+    const { wrapper } = createQueryClientTestHarness();
+
+    const first = renderHook(
+      () => useSystemExecutionOptions({ providerId: "codex" }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(first.result.current.data).toEqual(errorResponse);
+    });
+    first.unmount();
+
+    const second = renderHook(
+      () => useSystemExecutionOptions({ providerId: "codex" }),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(sdk.system.executionOptions).toHaveBeenCalledTimes(2);
+    });
+    second.unmount();
+  });
+
+  it("keeps a verified model catalog fresh across remounts", async () => {
+    vi.mocked(sdk.system.executionOptions).mockResolvedValue(
+      EXECUTION_OPTIONS_RESPONSE,
+    );
+    const { wrapper } = createQueryClientTestHarness();
+
+    const first = renderHook(
+      () => useSystemExecutionOptions({ providerId: "codex" }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(first.result.current.data).toEqual(EXECUTION_OPTIONS_RESPONSE);
+    });
+    first.unmount();
+
+    const second = renderHook(
+      () => useSystemExecutionOptions({ providerId: "codex" }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(second.result.current.data).toEqual(EXECUTION_OPTIONS_RESPONSE);
+    });
+
+    expect(sdk.system.executionOptions).toHaveBeenCalledTimes(1);
+    second.unmount();
+  });
+
   it("does not retry intentionally aborted model selector requests", async () => {
     vi.mocked(sdk.system.executionOptions).mockRejectedValue(
       new DOMException("Aborted", "AbortError"),
