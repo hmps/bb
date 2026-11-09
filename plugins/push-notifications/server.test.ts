@@ -1,4 +1,7 @@
-import type { PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
+import type {
+  BbPluginApi,
+  PluginThreadEventPayloads,
+} from "@get-bb/plugin-sdk";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -23,6 +26,9 @@ import type {
 type ThreadResponse = PluginThreadEventPayloads["thread.idle"]["thread"];
 type PendingInteraction =
   PluginThreadEventPayloads["interaction.pending"]["interaction"];
+type DecisionSet = Awaited<
+  ReturnType<BbPluginApi["sdk"]["threads"]["experimental_decisions"]["list"]>
+>[number];
 
 const COALESCE_MS = 10;
 const EXPO_URL = "http://expo.test/push";
@@ -104,6 +110,22 @@ function pendingQuestion(threadId: string, prompt: string): PendingInteraction {
   };
 }
 
+function openDecisionSet(threadId: string, id = "decisions-1"): DecisionSet {
+  return {
+    id,
+    threadId,
+    turnId: "turn-1",
+    toolCallId: "tool-1",
+    headline: "Choose **release** target",
+    decisions: [],
+    status: "open",
+    resolutionRequestId: null,
+    resolutionText: null,
+    createdAt: 1,
+    resolvedAt: null,
+  };
+}
+
 interface SetupOptions {
   appUrl?: string | null;
   dismissReadNotifications?: boolean;
@@ -116,6 +138,7 @@ async function setup(options: SetupOptions = {}) {
   const expo = options.expo ?? createFakeExpo();
   const threads = new Map<string, ThreadResponse>();
   const interactions = new Map<string, PendingInteraction[]>();
+  const decisions = new Map<string, DecisionSet[]>();
   const metadata = new Map<string, Record<string, unknown>>();
   let nextId = 1;
   const listAncestors = vi.fn(
@@ -188,6 +211,9 @@ async function setup(options: SetupOptions = {}) {
         }),
         interactions: {
           list: async ({ threadId }) => interactions.get(threadId) ?? [],
+        },
+        experimental_decisions: {
+          list: async ({ threadId }) => decisions.get(threadId) ?? [],
         },
       },
     },
@@ -287,6 +313,7 @@ async function setup(options: SetupOptions = {}) {
     addSubscription,
     cleanup,
     clientSignals: () => signals(CLIENT_NOTIFICATION_CHANNEL),
+    decisions,
     expo,
     getLevel,
     interactions,
@@ -470,6 +497,180 @@ describe("push subscription RPC and CLI", () => {
 });
 
 describe("push sender", () => {
+  it.each(["all", "input-only"])(
+    "sends one decision headline with the %s preference",
+    async (level) => {
+      const host = await setup();
+      try {
+        await host.addSubscription();
+        const thread = host.setThread({ hasOpenDecisions: true });
+        const decisionSet = openDecisionSet(thread.id);
+        host.decisions.set(thread.id, [decisionSet]);
+        await host.setLevel(thread.id, level);
+
+        for (let index = 0; index < 2; index += 1) {
+          await host.harness.behavior.emitThreadEvent("thread.idle", {
+            thread,
+            lastAssistantText: "Ordinary completion text",
+          });
+        }
+
+        await vi.waitFor(() => expect(host.expo.requests).toHaveLength(1));
+        expect(host.expo.requests[0]?.[0]).toMatchObject({
+          title: "Needs you",
+          body: decisionSet.headline,
+          data: { kind: "decisions", threadId: thread.id },
+        });
+        expect(host.clientSignals().map((signal) => signal.payload)).toEqual([
+          expect.objectContaining({
+            title: "Needs you",
+            body: decisionSet.headline,
+            threadId: thread.id,
+          }),
+        ]);
+
+        await host.harness.behavior.emitThreadEvent("thread.idle", {
+          thread,
+          lastAssistantText: "Repeated idle event",
+        });
+        await waitForCoalesce();
+        expect(host.expo.requests).toHaveLength(1);
+        expect(host.clientSignals()).toHaveLength(1);
+
+        host.decisions.set(thread.id, [
+          openDecisionSet(thread.id, "decisions-2"),
+        ]);
+        await host.harness.behavior.emitThreadEvent("thread.idle", {
+          thread,
+          lastAssistantText: null,
+        });
+        await vi.waitFor(() => expect(host.expo.requests).toHaveLength(2));
+      } finally {
+        await host.cleanup();
+      }
+    },
+  );
+
+  it.each([true, false])(
+    "drops a resolved decision set before sending with hasOpenDecisions=%s",
+    async (hasOpenDecisions) => {
+      const host = await setup();
+      try {
+        await host.addSubscription();
+        const thread = host.setThread({ hasOpenDecisions: true });
+        host.decisions.set(thread.id, [openDecisionSet(thread.id)]);
+        await host.harness.behavior.emitThreadEvent("thread.idle", {
+          thread,
+          lastAssistantText: "Do not send this completion instead",
+        });
+        host.decisions.set(thread.id, []);
+        host.threads.set(thread.id, { ...thread, hasOpenDecisions });
+
+        await waitForCoalesce();
+        expect(host.expo.requests).toEqual([]);
+        expect(host.clientSignals()).toEqual([]);
+      } finally {
+        await host.cleanup();
+      }
+    },
+  );
+
+  it("does not duplicate a decision set while its first delivery is in flight", async () => {
+    const expo = createFakeExpo();
+    let release!: () => void;
+    const deliveryReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const host = await setup({
+      expo,
+      fetch: async (url, init) => {
+        const response = await expo.fetch(url, init);
+        await deliveryReady;
+        return response;
+      },
+    });
+    try {
+      await host.addSubscription();
+      const thread = host.setThread({ hasOpenDecisions: true });
+      host.decisions.set(thread.id, [openDecisionSet(thread.id)]);
+      await host.harness.behavior.emitThreadEvent("thread.idle", {
+        thread,
+        lastAssistantText: null,
+      });
+      await vi.waitFor(() => expect(expo.requests).toHaveLength(1));
+
+      await host.harness.behavior.emitThreadEvent("thread.idle", {
+        thread,
+        lastAssistantText: null,
+      });
+      await waitForCoalesce();
+      release();
+      await waitForCoalesce();
+      expect(expo.requests).toHaveLength(1);
+      expect(host.clientSignals()).toHaveLength(1);
+    } finally {
+      release();
+      await host.cleanup();
+    }
+  });
+
+  it("retains decision delivery deduplication after plugin reload", async () => {
+    const host = await setup();
+    let replacement: ReturnType<typeof createFakePluginHost> | null = null;
+    try {
+      await host.addSubscription();
+      const thread = host.setThread({ hasOpenDecisions: true });
+      host.decisions.set(thread.id, [openDecisionSet(thread.id)]);
+      const idle = { thread, lastAssistantText: null };
+      await host.harness.behavior.emitThreadEvent("thread.idle", idle);
+      await vi.waitFor(() => expect(host.expo.requests).toHaveLength(1));
+      await host.stopService();
+
+      replacement = await host.harness.lifecycle.reload(
+        createPushNotificationsPlugin({
+          coalesceMs: COALESCE_MS,
+          fetch: host.expo.fetch,
+        }),
+      );
+      replacement.harness.behavior.runService("push-sender");
+      await replacement.harness.behavior.emitThreadEvent("thread.idle", idle);
+      await waitForCoalesce();
+      expect(host.expo.requests).toHaveLength(1);
+      expect(replacement.harness.realtimeSignals).toEqual([]);
+
+      host.decisions.set(thread.id, [
+        openDecisionSet(thread.id, "decisions-2"),
+      ]);
+      await replacement.harness.behavior.emitThreadEvent("thread.idle", idle);
+      await vi.waitFor(() => expect(host.expo.requests).toHaveLength(2));
+    } finally {
+      await replacement?.harness.lifecycle.dispose();
+      await host.cleanup();
+    }
+  });
+
+  it("uses normal idle behavior when the server excludes an open storage set", async () => {
+    const host = await setup();
+    try {
+      await host.addSubscription();
+      const thread = host.setThread({ hasOpenDecisions: false });
+      host.decisions.set(thread.id, [openDecisionSet(thread.id)]);
+      await host.harness.behavior.emitThreadEvent("thread.idle", {
+        thread,
+        lastAssistantText: "Workers continue",
+      });
+
+      await vi.waitFor(() => expect(host.expo.requests).toHaveLength(1));
+      expect(host.expo.requests[0]?.[0]).toMatchObject({
+        title: thread.title,
+        body: "Workers continue",
+        data: { kind: "turn-finished" },
+      });
+    } finally {
+      await host.cleanup();
+    }
+  });
+
   it("sends a root idle preview to each device and reads the relay setting at flush", async () => {
     const host = await setup();
     try {
