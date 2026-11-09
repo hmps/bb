@@ -1684,11 +1684,13 @@ describe("ComposerBox programmatic submit", () => {
     send = vi.fn(),
     running = true,
     text = "Ship it",
+    draftRequiresInput = true,
   }: {
     swapSubmitActions: boolean;
     send?: () => void | Promise<void>;
     running?: boolean;
     text?: string;
+    draftRequiresInput?: boolean;
   }) {
     const steer = vi.fn();
     const submitted: string[] = [];
@@ -1760,8 +1762,9 @@ describe("ComposerBox programmatic submit", () => {
                   onModifierSubmit: steer,
                   swapSubmitActions,
                   showModifierSubmitAction: true,
+                  draftRequiresInput,
                 }
-              : {},
+              : { draftRequiresInput },
           })}
         />
       </PluginComposerHostProvider>,
@@ -1831,6 +1834,33 @@ describe("ComposerBox programmatic submit", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("submits an empty draft when the draft action needs no input", async () => {
+    const { send, steer, submitted } = renderThreadComposerWithSubmitter({
+      swapSubmitActions: false,
+      running: false,
+      text: "",
+      draftRequiresInput: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Plugin submit" }));
+    await waitFor(() => expect(submitted).toEqual(["enter"]));
+    expect(send).toHaveBeenCalledOnce();
+    expect(steer).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an empty steer when the draft action needs no input", async () => {
+    const { send, steer, rejected } = renderThreadComposerWithSubmitter({
+      swapSubmitActions: true,
+      text: "",
+      draftRequiresInput: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Plugin submit" }));
+    await waitFor(() => expect(rejected).toEqual(["Type a message first."]));
+    expect(send).not.toHaveBeenCalled();
+    expect(steer).not.toHaveBeenCalled();
+  });
+
   it("starts a turn for a steer when there is nothing to steer", async () => {
     const { send, submitted } = renderThreadComposerWithSubmitter({
       swapSubmitActions: false,
@@ -1865,6 +1895,145 @@ describe("ComposerBox programmatic submit", () => {
     } finally {
       process.off("unhandledRejection", unhandled);
     }
+  });
+});
+
+describe("ComposerBox draft that needs no input", () => {
+  function getSubmitAction() {
+    const actions = document.querySelectorAll<HTMLButtonElement>(
+      "[data-promptbox-submit-action]",
+    );
+    expect(actions).toHaveLength(1);
+    const action = actions[0];
+    if (action === undefined) throw new Error("Missing submit action");
+    return action;
+  }
+
+  it.each([
+    { draftRequiresInput: true, enabled: false },
+    { draftRequiresInput: false, enabled: true },
+  ])(
+    "enables Send for an empty draft only when the draft needs no input ($draftRequiresInput)",
+    ({ draftRequiresInput, enabled }) => {
+      const onSubmit = vi.fn();
+      render(
+        <ComposerBox
+          {...createPromptBoxProps({
+            onSubmit,
+            submission: { draftRequiresInput },
+          })}
+        />,
+      );
+
+      const submit = screen.getByRole("button", { name: "Submit (Enter)" });
+      expect(submit.hasAttribute("disabled")).toBe(!enabled);
+      fireEvent.click(submit);
+      expect(onSubmit).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    },
+  );
+
+  it("shows Send instead of the microphone on touch and sends on tap", () => {
+    const restoreMatchMedia = mockPointerCoarse(true);
+    try {
+      const onSubmit = vi.fn();
+      render(
+        <ComposerBox
+          {...createPromptBoxProps({
+            onSubmit,
+            voice: createVoiceConfig(),
+            submission: { draftRequiresInput: false },
+          })}
+        />,
+      );
+
+      const submit = getSubmitAction();
+      expect(submit.getAttribute("aria-label")).toBe("Submit (Enter)");
+      vi.spyOn(submit, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(0, 0, 40, 40),
+      );
+      const touch = {
+        button: 0,
+        pointerType: "touch",
+        pointerId: 1,
+        isPrimary: true,
+        clientX: 20,
+        clientY: 20,
+      };
+      fireEvent.pointerDown(submit, touch);
+      fireEvent.pointerUp(submit, touch);
+      expect(onSubmit).toHaveBeenCalledOnce();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("keeps the microphone on touch while an empty draft needs input", () => {
+    const restoreMatchMedia = mockPointerCoarse(true);
+    try {
+      render(
+        <ComposerBox
+          {...createPromptBoxProps({ voice: createVoiceConfig() })}
+        />,
+      );
+
+      expect(getSubmitAction().getAttribute("aria-label")).toBe(
+        "Start voice input",
+      );
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("offers the send menu and hides Stop for an empty draft that needs no input", async () => {
+    const onSubmit = vi.fn();
+    const onModifierSubmit = vi.fn();
+    render(
+      <ComposerBox
+        {...createPromptBoxProps({
+          onSubmit,
+          submission: {
+            isRunning: true,
+            onStop: vi.fn(),
+            onModifierSubmit,
+            queuesDraft: true,
+            showModifierSubmitAction: true,
+            draftRequiresInput: false,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+    const options = screen.getByRole("button", { name: "Send options" });
+    expect(options.hasAttribute("disabled")).toBe(false);
+    expect(options.getAttribute("aria-hidden")).toBeNull();
+    fireEvent.pointerDown(options, {
+      button: 0,
+      ctrlKey: false,
+      pointerType: "mouse",
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Steer/ }));
+    expect(onModifierSubmit).toHaveBeenCalledOnce();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("keeps Stop for an empty draft when Enter steers", () => {
+    render(
+      <ComposerBox
+        {...createPromptBoxProps({
+          submission: {
+            isRunning: true,
+            onStop: vi.fn(),
+            onModifierSubmit: vi.fn(),
+            swapSubmitActions: true,
+            showModifierSubmitAction: true,
+            draftRequiresInput: false,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Stop run" })).toBeTruthy();
   });
 });
 

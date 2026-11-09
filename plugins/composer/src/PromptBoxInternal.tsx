@@ -2827,7 +2827,11 @@ export function PromptBoxInternal({
   const canSubmitVoiceTranscript =
     hasSubmittableInput && canSubmitActionAfterVoice(primarySubmitAction);
   const canPrimarySubmit = canSubmitAction(primarySubmitAction);
-  const canSubmit = hasSubmittableInput && canPrimarySubmit;
+  const hasSendableDraft =
+    hasSubmittableInput ||
+    (primarySubmitAction.kind !== "steer" &&
+      !primarySubmitAction.requiresInput);
+  const canSubmit = hasSendableDraft && canPrimarySubmit;
   const canModifierSubmit = canSubmitAction(modifierSubmitAction);
   const submittingBlockedReason = composerSubmittingBlockedReason({
     canSubmit: canPrimarySubmit,
@@ -2928,7 +2932,7 @@ export function PromptBoxInternal({
   const showVoiceAsPrimaryAction =
     isPointerCoarse &&
     !isAttaching &&
-    !hasSubmittableInput &&
+    !hasSendableDraft &&
     canStartVoiceInput;
   const showCompactVoiceAction =
     showCompactLayout &&
@@ -3675,7 +3679,7 @@ export function PromptBoxInternal({
                       <ComposerSendMenu
                         isPointerCoarse={isPointerCoarse}
                         modifierKind={modifierSubmitAction?.kind ?? null}
-                        hasInput={hasSubmittableInput}
+                        hasInput={hasSendableDraft}
                         canSubmit={canSubmit}
                         onSubmit={
                           showModifierInMenu && onModifierSubmit
