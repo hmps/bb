@@ -5,7 +5,10 @@ import { threadDecisionsQueryKey } from "./query-keys";
 import { requireThreadId } from "./query-helpers";
 import { REALTIME_OWNED_NO_FOCUS_QUERY_POLICY } from "./query-policies";
 
-export function threadDecisionsQueryOptions(threadId: string) {
+export function threadDecisionsQueryOptions(
+  threadId: string,
+  { enabled }: { enabled: boolean },
+) {
   return queryOptions({
     queryKey: threadDecisionsQueryKey(threadId),
     queryFn: ({ signal }) =>
@@ -13,12 +16,17 @@ export function threadDecisionsQueryOptions(threadId: string) {
         threadId: requireThreadId(threadId, "useThreadDecisions"),
         signal,
       }),
-    enabled: Boolean(threadId),
+    enabled: enabled && Boolean(threadId),
     ...REALTIME_OWNED_NO_FOCUS_QUERY_POLICY,
   });
 }
 
-export function useThreadDecisions(threadId: string) {
-  useThreadDetailRealtimeSubscription(threadId, { enabled: Boolean(threadId) });
-  return useQuery(threadDecisionsQueryOptions(threadId));
+export function useThreadDecisions(
+  threadId: string,
+  { enabled }: { enabled: boolean },
+) {
+  useThreadDetailRealtimeSubscription(threadId, {
+    enabled: enabled && Boolean(threadId),
+  });
+  return useQuery(threadDecisionsQueryOptions(threadId, { enabled }));
 }

@@ -17,12 +17,14 @@ import { vi } from "vitest";
 import type { PromptDraftAttachment } from "@bb/client-core";
 import type { TypeaheadConfig } from "@/components/promptbox/ComposerBox";
 import type { PluginComposerHost } from "@/components/plugin/plugin-composer-host";
+import type { ThreadDecisionAnswers } from "@/components/thread/decisions/useThreadDecisionAnswers";
 
 export const promptAreaMocks = {
   unknownReasoning: false,
   cancelThreadPlanMutate: vi.fn(),
   clearThreadGoalMutate: vi.fn(),
   createThreadMutateAsync: vi.fn(),
+  decisionAnswers: null as ThreadDecisionAnswers | null,
   defaultExecutionOptions: null as ResolvedThreadExecutionOptions | null,
   executionInputSources: {} as ExistingThreadExecutionInputSources,
   deleteQueuedMessageMutateAsync: vi.fn(),
@@ -410,6 +412,24 @@ vi.mock("@/components/promptbox/FollowUpPromptBox", async () => {
     ),
   };
 });
+
+const NO_DECISION_ANSWERS: ThreadDecisionAnswers = {
+  openSet: null,
+  picks: new Map(),
+  pick: () => {},
+  unpick: () => {},
+  clear: () => {},
+  applyTo: (input) => [...input],
+};
+
+vi.mock("@/components/thread/decisions/useThreadDecisionAnswers", () => ({
+  useThreadDecisionAnswers: () =>
+    promptAreaMocks.decisionAnswers ?? NO_DECISION_ANSWERS,
+}));
+
+vi.mock("@/components/thread/decisions/DecisionCard", () => ({
+  DecisionCard: () => null,
+}));
 
 vi.mock("@/components/promptbox/ThreadEnvironmentSummary", () => ({
   ThreadEnvironmentSummary: () => (

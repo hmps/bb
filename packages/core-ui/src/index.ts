@@ -1,4 +1,5 @@
 export { assertNever } from "./assert-never.js";
+export { composeThreadDecisionAnswer } from "./thread-decision-answer.js";
 
 export {
   formatEnvironmentDisplay,

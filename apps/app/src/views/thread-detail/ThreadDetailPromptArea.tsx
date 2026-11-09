@@ -52,6 +52,8 @@ import {
   type CommittedComposerState,
 } from "@/components/promptbox/composer-selection-settle";
 import { ThreadPendingInteractionBanners } from "@/components/thread/pending-interactions/ThreadPendingInteractionBanner";
+import { DecisionCard } from "@/components/thread/decisions/DecisionCard";
+import { useThreadDecisionAnswers } from "@/components/thread/decisions/useThreadDecisionAnswers";
 import {
   type PluginComposerHost,
   useComposerHostDraftNotifier,
@@ -162,6 +164,7 @@ import {
 } from "@bb/client-core";
 
 const ignoreReportedSubmitError = () => {};
+const DECISION_PROMPT_PLACEHOLDER = "Or say something else…";
 const ignorePermissionModeChange = () => {};
 
 export interface ThreadDetailSentMessageEdit {
@@ -473,6 +476,7 @@ export function ThreadDetailPromptArea({
   const focusBottomPluginComposer = useCallback(() => {
     setBottomPluginFocusNonce((nonce) => nonce + 1);
   }, []);
+  const decisionAnswers = useThreadDecisionAnswers(thread.id);
   const focusInlinePluginComposer = useCallback(() => {
     setEditFocusNonce((nonce) => nonce + 1);
   }, []);
@@ -993,12 +997,19 @@ export function ThreadDetailPromptArea({
     isStopRequested,
     runtimeDisplayStatus,
   ]);
-  const promptPlaceholder = getFollowUpPromptPlaceholder(
-    isStopRequested ? "stopping" : runtimeDisplayStatus,
-  );
-  const compactPromptPlaceholder = getCompactFollowUpPromptPlaceholder(
-    isStopRequested ? "stopping" : runtimeDisplayStatus,
-  );
+  const answersDecisions =
+    decisionAnswers.openSet !== null && !isHandoffSelection;
+  const hasDecisionPicks = answersDecisions && decisionAnswers.picks.size > 0;
+  const promptPlaceholder = answersDecisions
+    ? DECISION_PROMPT_PLACEHOLDER
+    : getFollowUpPromptPlaceholder(
+        isStopRequested ? "stopping" : runtimeDisplayStatus,
+      );
+  const compactPromptPlaceholder = answersDecisions
+    ? DECISION_PROMPT_PLACEHOLDER
+    : getCompactFollowUpPromptPlaceholder(
+        isStopRequested ? "stopping" : runtimeDisplayStatus,
+      );
   const providerIds = useMemo(
     () => providerOptions.map((option) => option.value),
     [providerOptions],
@@ -1150,7 +1161,8 @@ export function ThreadDetailPromptArea({
     [normalPluginComposerHost],
   );
 
-  const hasPromptDraftInput = currentPromptDraftInput.length > 0;
+  const hasPromptDraftInput =
+    currentPromptDraftInput.length > 0 || hasDecisionPicks;
   const canSubmitModifierShortcut =
     !shouldHideComposer &&
     canSubmitFollowUpShortcut({
@@ -1276,7 +1288,8 @@ export function ThreadDetailPromptArea({
         shouldQueueFollowUpMessage(runtimeDisplayStatus) &&
         sendAt === undefined &&
         pluginSubmission === undefined;
-      if (submittedInput.length === 0) {
+      const answeredInput = decisionAnswers.applyTo(submittedInput);
+      if (answeredInput.length === 0) {
         throw new Error("Type a message before submitting it.");
       }
       if (!isQueuingMessage && isDefaultExecutionOptionsLoading) {
@@ -1290,7 +1303,7 @@ export function ThreadDetailPromptArea({
         const request = buildAutoFollowUpRequest({
           compactFirst: compactFirst && sendAt === undefined,
           threadId: thread.id,
-          input: submittedInput,
+          input: answeredInput,
           execution: followUpExecutionSelection,
         });
         if (request) {
@@ -1299,6 +1312,7 @@ export function ThreadDetailPromptArea({
             ...(sendAt === undefined ? {} : { sendAt }),
             ...(pluginSubmission === undefined ? {} : { pluginSubmission }),
           });
+          decisionAnswers.clear();
           if (!isQueuingMessage) {
             setFullHistoryThreadId(null);
           }
@@ -1319,6 +1333,7 @@ export function ThreadDetailPromptArea({
     [
       compactFirst,
       createHandoffThread,
+      decisionAnswers,
       effectiveSelectedModel,
       followUpExecutionSelection,
       isDefaultExecutionOptionsLoading,
@@ -1342,7 +1357,9 @@ export function ThreadDetailPromptArea({
       }
 
       const submittedDraft = promptDraft.getCurrent();
-      const submittedInput = promptDraftToInput(submittedDraft);
+      const submittedInput = isHandoffSelection
+        ? promptDraftToInput(submittedDraft)
+        : decisionAnswers.applyTo(promptDraftToInput(submittedDraft));
       const shortcutRequest = buildFollowUpShortcutRequest({
         execution: followUpExecutionSelection,
         input: submittedInput,
@@ -1368,6 +1385,7 @@ export function ThreadDetailPromptArea({
                     ? {}
                     : { pluginSubmission }),
                 });
+                decisionAnswers.clear();
               } catch (nextError) {
                 promptDraft.restoreIfEmpty(submittedDraft);
                 throw reportMutationError({
@@ -1405,7 +1423,9 @@ export function ThreadDetailPromptArea({
     },
     [
       canSubmitModifierShortcut,
+      decisionAnswers,
       followUpExecutionSelection,
+      isHandoffSelection,
       promptDraft,
       queuedMessagesRef,
       sendMessage,
@@ -1491,6 +1511,7 @@ export function ThreadDetailPromptArea({
       compactPromptPlaceholder,
       promptPlaceholder,
       canModifierSubmit: canSubmitModifierShortcut,
+      draftRequiresInput: !hasDecisionPicks,
       steerActiveThreadOnEnter,
       submitMode,
       threadRuntimeDisplayStatus: runtimeDisplayStatus,
@@ -1498,6 +1519,7 @@ export function ThreadDetailPromptArea({
     [
       canSubmitModifierShortcut,
       compactPromptPlaceholder,
+      hasDecisionPicks,
       currentPromptDraft,
       handleModifierSubmit,
       handleSend,
@@ -2211,6 +2233,13 @@ export function ThreadDetailPromptArea({
             threadId={thread.id}
           />
         ) : null}
+        {shouldHideComposer ? null : (
+          <DecisionCard
+            threadId={thread.id}
+            answers={decisionAnswers}
+            onSomethingElse={focusBottomPluginComposer}
+          />
+        )}
         {shouldHideComposer ? null : queuedMessagesPending ? (
           <QueuedMessagesPendingCard queuedMessageCount={queuedMessageCount} />
         ) : (
@@ -2293,6 +2322,8 @@ export function ThreadDetailPromptArea({
       submitMode.kind,
       thread.archivedAt,
       thread.id,
+      decisionAnswers,
+      focusBottomPluginComposer,
     ],
   );
 

@@ -143,6 +143,7 @@ export interface FollowUpComposerProps {
   compactPromptPlaceholder: string;
   promptPlaceholder: string;
   canModifierSubmit: boolean;
+  draftRequiresInput?: boolean;
   steerActiveThreadOnEnter: boolean;
   submitMode: FollowUpSubmitMode;
   threadRuntimeDisplayStatus: ThreadRuntimeDisplayStatus;
@@ -755,6 +756,7 @@ function FollowUpPromptBoxWithComposer({
                 : undefined,
           onModifierSubmit,
           queuesDraft: submitMode.kind === "queue",
+          draftRequiresInput: composer.draftRequiresInput,
           swapSubmitActions: steerOnPrimarySubmit,
           showModifierSubmitAction: submitMode.kind === "queue",
           title: composer.isFollowUpSubmitting
