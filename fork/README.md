@@ -2,6 +2,11 @@
 
 This fork (`hmps/bb`) adds features on top of `get-bb/bb`. This folder holds the tools to merge upstream changes into the fork.
 
+## Setup in a new clone
+
+1. Add upstream: `git remote add upstream https://github.com/get-bb/bb.git`.
+2. Point `gh` at the fork: `gh repo set-default hmps/bb`. Otherwise `gh pr create` targets `get-bb/bb`, and `get-bb/bb` closes PRs from authors that are not on its allow list.
+
 ## Merge upstream
 
 1. Start from a clean fork `main` with `upstream` set to `https://github.com/get-bb/bb.git`.
