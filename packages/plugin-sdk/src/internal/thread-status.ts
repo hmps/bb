@@ -89,7 +89,8 @@ function addThreadFlags(
   thread: PluginThreadStatusThread,
 ): void {
   const unreadDone = isUnreadDoneThread(thread);
-  flags.pending ||= thread.hasPendingInteraction;
+  flags.pending ||=
+    thread.hasPendingInteraction || thread.experimental_hasOpenDecisions;
   flags.unreadError ||= unreadDone && thread.status === "error";
   flags.unreadSuccess ||= unreadDone && thread.status !== "error";
   flags.runtime ||= RUNNING_RUNTIME_STATUSES[thread.runtimeStatus];

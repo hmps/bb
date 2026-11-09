@@ -715,6 +715,7 @@ function AppLayoutContent({ children }: AppLayoutProps) {
     (currentThreadPendingInteractionsQuery.data?.length ?? 0) > 0;
   const faviconBadge = shouldShowFaviconAttentionDot({
     currentThreadHasPendingInteraction,
+    currentThreadHasOpenDecisions: thread?.hasOpenDecisions ?? false,
     currentThreadId: threadId,
     isThreadView,
     sidebarThreads,

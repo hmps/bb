@@ -16,6 +16,7 @@ function makeSidebarThread(
     originKind: null,
     parentThreadId: null,
     hasPendingInteraction: false,
+    hasOpenDecisions: false,
     lastReadAt: 10,
     latestAttentionAt: 20,
     visibility: "visible",
@@ -25,12 +26,44 @@ function makeSidebarThread(
 
 const BASE_ARGS = {
   currentThreadHasPendingInteraction: false,
+  currentThreadHasOpenDecisions: false,
   isThreadView: false,
   thread: null,
   sidebarThreads: [] as FaviconSidebarThread[],
 };
 
 describe("shouldShowFaviconAttentionDot", () => {
+  it.each([
+    { name: "visible background", focused: false, expected: true },
+    { name: "hidden background", focused: false, hidden: true, expected: false },
+    { name: "unrelated background", focused: true, expected: false },
+    { name: "current", focused: true, current: true, expected: true },
+    { name: "delegated child", focused: true, child: true, expected: true },
+    { name: "fork child", focused: true, child: true, fork: true, expected: false },
+    { name: "resolved", focused: false, resolved: true, expected: false },
+  ])("handles $name decisions on read threads", (testCase) => {
+    expect(
+      shouldShowFaviconAttentionDot({
+        ...BASE_ARGS,
+        isThreadView: testCase.focused,
+        currentThreadId: "thr_current",
+        currentThreadHasOpenDecisions: testCase.current ?? false,
+        thread: { lastReadAt: 30, latestAttentionAt: 20 },
+        sidebarThreads: testCase.current
+          ? []
+          : [
+              makeSidebarThread({
+                lastReadAt: 30,
+                hasOpenDecisions: !testCase.resolved,
+                visibility: testCase.hidden ? "hidden" : "visible",
+                parentThreadId: testCase.child ? "thr_current" : null,
+                originKind: testCase.fork ? "fork" : null,
+              }),
+            ],
+      }),
+    ).toBe(testCase.expected);
+  });
+
   it("ignores unread side-chat threads hidden from the sidebar", () => {
     expect(
       shouldShowFaviconAttentionDot({
@@ -195,6 +228,11 @@ it("reports pending threads separately from threads that are only unread, exclud
         hasPendingInteraction: true,
       }),
       makeSidebarThread({ id: "both", hasPendingInteraction: true }),
+      makeSidebarThread({
+        id: "decisions",
+        lastReadAt: 30,
+        hasOpenDecisions: true,
+      }),
       makeSidebarThread({ id: "read", lastReadAt: 30 }),
       makeSidebarThread({
         id: "hidden",
@@ -203,7 +241,7 @@ it("reports pending threads separately from threads that are only unread, exclud
       }),
     ]),
   ).toEqual({
-    pendingThreadIds: ["pending", "both"],
+    pendingThreadIds: ["pending", "both", "decisions"],
     unreadThreadIds: ["unread"],
   });
 });

@@ -1430,6 +1430,8 @@ export interface PluginSidebarThread {
   queuedWork: ThreadQueuedWork;
   /** The agent is blocked on the user: an approval or a question. */
   hasPendingInteraction: boolean;
+  /** An open decision set needs input, with no running child. Computed by the server. */
+  experimental_hasOpenDecisions: boolean;
   activity: PluginSidebarThreadActivity;
   indicator: PluginSidebarThreadIndicator;
   /**
@@ -1690,6 +1692,7 @@ export type PluginThreadStatusThread = Pick<
   | "runtimeStatus"
   | "queuedWork"
   | "hasPendingInteraction"
+  | "experimental_hasOpenDecisions"
   | "activity"
   | "isUnread"
   | "parentThreadId"

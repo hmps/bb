@@ -23,6 +23,7 @@ interface ThreadSpec {
   unread?: boolean;
   parented?: boolean;
   pending?: boolean;
+  decisions?: boolean;
   queued?: ThreadQueuedWork;
   workflows?: number;
   backgroundAgents?: number;
@@ -58,6 +59,32 @@ const UNREAD_ERROR: ThreadSpec = { status: "error", unread: true };
 
 const CASES: StatusCase[] = [
   { name: "an idle read thread", thread: {}, indicator: "none" },
+  {
+    name: "open decisions on a read thread",
+    thread: { decisions: true },
+    indicator: "waiting-for-input",
+    label: "Thread needs user input",
+    isWorking: false,
+  },
+  {
+    name: "open decisions over runtime and row status",
+    thread: { ...RUNNING, decisions: true },
+    rowStatus: ROW_STATUS,
+    indicator: "waiting-for-input",
+    rowStatusShown: false,
+    isWorking: true,
+  },
+  {
+    name: "an unread error over open decisions",
+    thread: { ...UNREAD_ERROR, decisions: true },
+    indicator: "unread-error",
+  },
+  {
+    name: "a collapsed group with open decisions",
+    thread: null,
+    hidden: [{ decisions: true, parented: true }],
+    indicator: "waiting-for-input",
+  },
   { name: "an idle draft", thread: {}, draft: true, indicator: "draft" },
   ...(["active", "provisioning", "starting", "stopping"] as const).map(
     (runtime): StatusCase => ({
@@ -462,6 +489,7 @@ function toEntry(spec: ThreadSpec): ThreadListEntry {
     latestAttentionAt: 2,
     parentThreadId: spec.parented ? "thr_parent" : null,
     hasPendingInteraction: spec.pending ?? false,
+    hasOpenDecisions: spec.decisions ?? false,
     queuedWork: spec.queued ?? "none",
     activity: {
       activeWorkflowCount: spec.workflows ?? 0,
