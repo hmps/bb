@@ -38,6 +38,8 @@ const maximalThreadMetadata: ThreadChangeMetadata = {
   eventTypes: [...threadEventTypeValues],
   timelineSequence: 42,
   hasPendingInteraction: true,
+  hasOpenDecisions: true,
+  previousParentThreadId: "thr_parent",
   projectId: "proj_1",
   statusChange: {
     status: "active",

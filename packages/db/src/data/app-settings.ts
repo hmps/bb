@@ -117,7 +117,10 @@ function parseAppSettingsRows(rows: readonly StoredSettingRow[]): AppSettings {
   return appSettingsSchema.parse(values);
 }
 
-export function setAppSettings(db: DbConnection, settings: AppSettings): void {
+export function setAppSettings(
+  db: DbQueryConnection,
+  settings: AppSettings,
+): void {
   const updatedAt = Date.now();
   db.transaction((transaction) => {
     for (const key of appSettingsKeys) {

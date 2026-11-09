@@ -8,11 +8,7 @@ import {
   type ExperimentUpdates,
   type Experiments,
 } from "@bb/domain";
-import {
-  prepareCachedQuery,
-  type DbConnection,
-  type DbQueryConnection,
-} from "../connection.js";
+import { prepareCachedQuery, type DbQueryConnection } from "../connection.js";
 import { appSettingsValues, systemExperiments } from "../schema.js";
 import {
   deepFreeze,
@@ -38,7 +34,7 @@ const prepareExperimentRows = (db: DbQueryConnection) =>
     .prepare();
 
 const parsedExperiments = new WeakMap<
-  DbConnection,
+  DbQueryConnection,
   { rows: StoredSettingRow[]; experiments: Experiments }
 >();
 
@@ -50,7 +46,7 @@ function parseStoredBoolean(text: string): boolean {
   }
 }
 
-export function getExperiments(db: DbConnection): Experiments {
+export function getExperiments(db: DbQueryConnection): Experiments {
   const earlyAdopterRow = prepareCachedQuery(db, prepareEarlyAdopterRow).get();
   const experimentRows = prepareCachedQuery(db, prepareExperimentRows).all();
   const rows: StoredSettingRow[] = [
@@ -80,7 +76,7 @@ export function getExperiments(db: DbConnection): Experiments {
 }
 
 export function setExperiments(
-  db: DbConnection,
+  db: DbQueryConnection,
   updates: ExperimentUpdates,
 ): void {
   const updatedAt = Date.now();

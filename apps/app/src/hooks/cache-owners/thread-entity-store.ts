@@ -33,12 +33,14 @@ import {
 } from "../queries/query-keys";
 
 type Fields = Record<string, unknown>;
-type ListFacetKey = Exclude<keyof ThreadListEntry, keyof ThreadWithRuntime>;
-type DetailFacetKey = Exclude<keyof ThreadResponse, keyof ThreadWithRuntime>;
+type ThreadEntityFields = ThreadWithRuntime &
+  Pick<ThreadListEntry, "hasOpenDecisions">;
+type ListFacetKey = Exclude<keyof ThreadListEntry, keyof ThreadEntityFields>;
+type DetailFacetKey = Exclude<keyof ThreadResponse, keyof ThreadEntityFields>;
 type Facet = "list" | "detail";
 
 export interface ThreadEntity {
-  thread: Partial<ThreadWithRuntime>;
+  thread: Partial<ThreadEntityFields>;
   list: Partial<Pick<ThreadListEntry, ListFacetKey>> | null;
   detail: Partial<Pick<ThreadResponse, DetailFacetKey>> | null;
 }
@@ -63,7 +65,10 @@ const DETAIL_FACET: Record<DetailFacetKey, true> = {
   canSpawnChild: true,
   queuedMessageCount: true,
 };
-const THREAD_KEYS = new Set(Object.keys(threadWithRuntimeSchema.shape));
+const THREAD_KEYS = new Set([
+  ...Object.keys(threadWithRuntimeSchema.shape),
+  "hasOpenDecisions",
+]);
 const FACET_KEYS: Record<Facet, ReadonlySet<string>> = {
   list: new Set(Object.keys(LIST_FACET)),
   detail: new Set(Object.keys(DETAIL_FACET)),

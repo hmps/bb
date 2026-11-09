@@ -1,3 +1,5 @@
+import { dismissAllOpenThreadDecisionSets } from "@bb/db";
+import { notifyThreadDecisionsChanged } from "../services/threads/thread-decisions.js";
 import { withReportedProviderId } from "../services/system/provider-telemetry.js";
 import { rememberPluginRecommendation } from "../services/plugins/plugin-use-telemetry.js";
 import { createMobileAppReleaseService } from "../services/install/mobile-app-releases.js";
@@ -338,7 +340,14 @@ export function registerSystemRoutes(
           ? showUnhandledProviderEvents
           : diagnosticValue,
     });
-    setAppSettings(deps.db, updatedSettings);
+    const dismissed = deps.db.transaction((tx) => {
+      setAppSettings(tx, updatedSettings);
+      return getExperiments(tx).decisionCards
+        ? []
+        : dismissAllOpenThreadDecisionSets(tx);
+    });
+    for (const set of dismissed)
+      notifyThreadDecisionsChanged(deps, set.threadId);
     if (current.telemetryEnabled && !updatedSettings.telemetryEnabled) {
       deps.telemetry.capture({ name: "telemetry_disabled" });
     }
@@ -380,7 +389,14 @@ export function registerSystemRoutes(
   });
 
   put(routes.experiments, (context, payload) => {
-    setExperiments(deps.db, payload);
+    const dismissed = deps.db.transaction((tx) => {
+      setExperiments(tx, payload);
+      return getExperiments(tx).decisionCards
+        ? []
+        : dismissAllOpenThreadDecisionSets(tx);
+    });
+    for (const set of dismissed)
+      notifyThreadDecisionsChanged(deps, set.threadId);
     deps.hub.notifySystem(["config-changed"]);
     return context.json(getExperiments(deps.db));
   });

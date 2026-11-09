@@ -70,6 +70,7 @@ export function makeSidebarThread(
     runtimeStatus: "idle",
     queuedWork: "none",
     hasPendingInteraction: false,
+    experimental_hasOpenDecisions: false,
     indicator: "none",
     indicatorLabel: null,
     isUnread: (lastReadAt ?? 0) < latestAttentionAt,

@@ -132,6 +132,7 @@ interface BuildAgentThreadMessageTextArgs {
 }
 
 interface SendThreadMessageTransactionPreflightArgs {
+  requestId: string | null;
   tx: DbTransaction;
 }
 
@@ -432,7 +433,7 @@ function appendAndQueueSendThreadMessageInTransaction({
   const request = db.transaction(
     (tx) => {
       assertThreadHostAcceptsWork(tx, thread);
-      beforeAppendInTransaction?.({ tx });
+      beforeAppendInTransaction?.({ tx, requestId });
       const appended =
         appendPreparedClientTurnRequestedEventWithNotificationInTransaction(
           tx,
@@ -491,7 +492,10 @@ export async function sendThreadMessage(
   if (isStandaloneBuiltinClearCommand(args.payload.input)) {
     await clearThreadContext(deps, {
       ...(args.beforeAppendInTransaction !== undefined
-        ? { beforeCommitInTransaction: args.beforeAppendInTransaction }
+        ? {
+            beforeCommitInTransaction: ({ tx }) =>
+              args.beforeAppendInTransaction?.({ tx, requestId: null }),
+          }
         : {}),
       environment: args.environment,
       thread: args.thread,
@@ -554,8 +558,9 @@ async function sendThreadMessageWithoutContextClear(
   ));
   const beforeAppendInTransaction: SendThreadMessageTransactionPreflight = ({
     tx,
+    requestId,
   }) => {
-    args.beforeAppendInTransaction?.({ tx });
+    args.beforeAppendInTransaction?.({ tx, requestId });
     if (deferredFirstTurnContext) {
       requireDeferredFirstTurnContextCurrent(tx, {
         requestSequence: deferredFirstTurnContext.requestSequence,
@@ -716,8 +721,8 @@ async function sendThreadMessageWithoutContextClear(
       : await prepareReadyThreadTurnCommand(deps, commandArgs);
     const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
-      beforeAppendInTransaction: ({ tx }) => {
-        beforeAppendInTransaction({ tx });
+      beforeAppendInTransaction: ({ tx, requestId }) => {
+        beforeAppendInTransaction({ tx, requestId });
         ensureThreadCanStartRequest(thread);
       },
       db: deps.db,

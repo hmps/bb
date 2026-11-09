@@ -21,6 +21,7 @@ export function toThreadStatusThread(
     runtimeStatus: entry.runtime.displayStatus,
     queuedWork: entry.queuedWork,
     hasPendingInteraction: entry.hasPendingInteraction,
+    experimental_hasOpenDecisions: entry.hasOpenDecisions,
     activity: {
       workflows: entry.activity.activeWorkflowCount,
       backgroundAgents: entry.activity.activeBackgroundAgentCount,

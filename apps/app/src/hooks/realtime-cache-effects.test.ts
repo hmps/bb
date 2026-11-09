@@ -24,6 +24,7 @@ import {
   systemExecutionOptionsQueryKey,
   systemProvidersQueryKey,
   threadDefaultExecutionOptionsQueryKey,
+  threadDecisionsQueryKey,
   threadConversationOutlineQueryKey,
   threadQueuedMessagesQueryKey,
   threadListQueryKey,
@@ -3463,4 +3464,65 @@ describe("createRealtimeCacheEffects", () => {
       effects.dispose();
     });
   });
+});
+
+describe("decision realtime changes", () => {
+  it.each([true, false])(
+    "refreshes the open set and patches list and detail records (visible: %s)",
+    async (visible) => {
+      const queryClient = createAppQueryClient();
+      const visibility = createFakeVisibility();
+      const effects = createRealtimeCacheEffects({ queryClient, visibility });
+      const threadId = "thr_decisions";
+      const listKey = threadListQueryKey({
+        archived: false,
+        projectId: "project-1",
+      });
+      const detailKey = threadQueryKey(threadId);
+      queryClient.setQueryData(listKey, [
+        { id: threadId, hasOpenDecisions: false },
+      ]);
+      queryClient.setQueryData(detailKey, {
+        id: threadId,
+        hasOpenDecisions: false,
+      });
+      let serverSets: string[] = [];
+      const observer = new QueryObserver(queryClient, {
+        queryKey: threadDecisionsQueryKey(threadId),
+        queryFn: async () => serverSets,
+        retry: false,
+      });
+      const stop = observer.subscribe(() => {});
+      try {
+        await vi.waitFor(() =>
+          expect(observer.getCurrentResult().data).toEqual([]),
+        );
+        for (const next of [["first"], ["replacement"], [], ["third"], []]) {
+          serverSets = next;
+          visibility.setVisible(visible);
+          effects.handleChanged({
+            type: "changed",
+            entity: "thread",
+            id: threadId,
+            changes: ["decisions-changed"],
+            metadata: { hasOpenDecisions: next.length > 0 },
+          });
+          expect(queryClient.getQueryData(detailKey)).toMatchObject({
+            hasOpenDecisions: next.length > 0,
+          });
+          expect(queryClient.getQueryData(listKey)).toMatchObject([
+            { hasOpenDecisions: next.length > 0 },
+          ]);
+          if (!visible) visibility.setVisible(true);
+          await vi.waitFor(() =>
+            expect(observer.getCurrentResult().data).toEqual(next),
+          );
+        }
+      } finally {
+        stop();
+        effects.dispose();
+        queryClient.clear();
+      }
+    },
+  );
 });

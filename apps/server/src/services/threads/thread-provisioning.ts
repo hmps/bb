@@ -71,7 +71,10 @@ interface RequestThreadProvisionArgs {
 }
 
 interface RequestThreadTargetReprovisionArgs {
-  beforeRequestAppendInTransaction?: (args: { tx: DbTransaction }) => void;
+  beforeRequestAppendInTransaction?: (args: {
+    tx: DbTransaction;
+    requestId: string;
+  }) => void;
   environment: EnvironmentRow;
   execution: ResolvedThreadExecutionOptions;
   input: PromptInput[];
@@ -441,7 +444,7 @@ function appendReprovisionTurnRequest(
   const requestId = createClientTurnRequestId();
   const request = deps.db.transaction(
     (tx) => {
-      args.beforeRequestAppendInTransaction?.({ tx });
+      args.beforeRequestAppendInTransaction?.({ tx, requestId });
       const request =
         appendPreparedClientTurnRequestedEventWithNotificationInTransaction(
           tx,

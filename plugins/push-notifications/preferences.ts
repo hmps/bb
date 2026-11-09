@@ -59,6 +59,7 @@ export const NOTIFICATION_LEVEL_LABELS: Record<OwnNotificationLevel, string> = {
 
 export type PushNotificationKind =
   | "pending-interaction"
+  | "decisions"
   | "turn-finished"
   | "thread-error";
 
@@ -66,8 +67,13 @@ export const NOTIFICATION_KINDS_BY_LEVEL: Record<
   NotificationLevel,
   ReadonlySet<PushNotificationKind>
 > = {
-  all: new Set(["pending-interaction", "thread-error", "turn-finished"]),
-  "input-only": new Set(["pending-interaction", "thread-error"]),
+  all: new Set([
+    "pending-interaction",
+    "decisions",
+    "thread-error",
+    "turn-finished",
+  ]),
+  "input-only": new Set(["pending-interaction", "decisions", "thread-error"]),
   muted: new Set(),
 };
 

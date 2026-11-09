@@ -38,6 +38,7 @@ function threadOnMachine(
     runtimeStatus: "idle",
     queuedWork: "none",
     hasPendingInteraction: false,
+    experimental_hasOpenDecisions: false,
     activity: {
       workflows: 0,
       backgroundAgents: 0,

@@ -4,6 +4,7 @@ import type {
   PermissionMode,
   PromptTextMention,
   ResolvedThreadExecutionOptions,
+  ThreadDecisionSet,
   ThreadQueuedMessage,
   ThreadTimelineActivePromptMode,
   ThreadTimelineGoal,
@@ -17,12 +18,15 @@ import { vi } from "vitest";
 import type { PromptDraftAttachment } from "@bb/client-core";
 import type { TypeaheadConfig } from "@/components/promptbox/ComposerBox";
 import type { PluginComposerHost } from "@/components/plugin/plugin-composer-host";
+import type { ThreadDecisionAnswers } from "@/components/thread/decisions/useThreadDecisionAnswers";
 
 export const promptAreaMocks = {
   unknownReasoning: false,
   cancelThreadPlanMutate: vi.fn(),
   clearThreadGoalMutate: vi.fn(),
   createThreadMutateAsync: vi.fn(),
+  decisionAnswers: null as ThreadDecisionAnswers | null,
+  decisionSets: null as ThreadDecisionSet[] | null,
   defaultExecutionOptions: null as ResolvedThreadExecutionOptions | null,
   executionInputSources: {} as ExistingThreadExecutionInputSources,
   deleteQueuedMessageMutateAsync: vi.fn(),
@@ -410,6 +414,51 @@ vi.mock("@/components/promptbox/FollowUpPromptBox", async () => {
     ),
   };
 });
+
+const NO_DECISION_ANSWERS: ThreadDecisionAnswers = {
+  openSet: null,
+  picks: new Map(),
+  pick: () => {},
+  unpick: () => {},
+  clear: () => {},
+  applyTo: (input) => [...input],
+};
+
+vi.mock(
+  "@/components/thread/decisions/useThreadDecisionAnswers",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/components/thread/decisions/useThreadDecisionAnswers")
+      >();
+    return {
+      useThreadDecisionAnswers: (threadId: string) =>
+        promptAreaMocks.decisionSets === null
+          ? (promptAreaMocks.decisionAnswers ?? NO_DECISION_ANSWERS)
+          : actual.useThreadDecisionAnswers(threadId),
+    };
+  },
+);
+
+vi.mock("@/hooks/queries/thread-decisions", () => ({
+  useThreadDecisions: () => ({ data: promptAreaMocks.decisionSets ?? [] }),
+}));
+
+vi.mock("@/components/thread/decisions/DecisionCard", () => ({
+  DecisionCard: ({ answers }: { answers: ThreadDecisionAnswers }) =>
+    answers.openSet === null ? null : (
+      <div data-testid="decision-card">
+        <span data-testid="decision-picks">
+          {[...answers.picks]
+            .map(([decision, option]) => `${decision}:${option}`)
+            .join(",")}
+        </span>
+        <button type="button" onClick={() => answers.pick(0, 1)}>
+          Pick second option
+        </button>
+      </div>
+    ),
+}));
 
 vi.mock("@/components/promptbox/ThreadEnvironmentSummary", () => ({
   ThreadEnvironmentSummary: () => (

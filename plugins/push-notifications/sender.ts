@@ -35,14 +35,17 @@ const DEFAULT_COALESCE_MS = 2_000;
 const NETWORK_WARNING_INTERVAL_MS = 60 * 60 * 1_000;
 const LAST_OUTCOME_KEY = "last-send-outcome";
 const DELIVERED_THREAD_KEY_PREFIX = "delivered-thread:";
+const DELIVERED_DECISIONS_KEY_PREFIX = "delivered-decisions:";
 const FALLBACK_BODIES: Record<PushNotificationKind, string> = {
   "pending-interaction": "Waiting for your input",
+  decisions: "Waiting for your decisions",
   "thread-error": "The thread hit an error",
   "turn-finished": "Finished and waiting for you",
 };
 const PUSH_KIND_PRIORITY: readonly PushNotificationKind[] = [
   "pending-interaction",
   "thread-error",
+  "decisions",
   "turn-finished",
 ];
 
@@ -274,6 +277,7 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
   } = args;
   const fetchImpl = args.fetch ?? undiciFetch;
   const pending = new Map<string, PendingThreadPush>();
+  const flushing = new Map<string, Promise<void>>();
   const inFlight = new Set<Promise<void>>();
   let dispatcher: EnvHttpProxyAgent | null = null;
   let lastNetworkWarningAt = Number.NEGATIVE_INFINITY;
@@ -285,7 +289,7 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
     await bb.storage.kv.set(LAST_OUTCOME_KEY, outcome);
   }
 
-  function track(work: Promise<void>, description: string): void {
+  function track(work: Promise<void>, description: string): Promise<void> {
     const tracked = work.catch((error: unknown) => {
       bb.log.error(
         `${description} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -293,6 +297,7 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
     });
     inFlight.add(tracked);
     void tracked.finally(() => inFlight.delete(tracked));
+    return tracked;
   }
 
   function cancel(threadId: string): void {
@@ -320,10 +325,16 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
       const entry = pending.get(threadId);
       pending.delete(threadId);
       if (!entry || !running) return;
-      track(
-        flushThread(threadId, entry),
+      const work = track(
+        (flushing.get(threadId) ?? Promise.resolve()).then(() =>
+          flushThread(threadId, entry),
+        ),
         `Push notification flush for thread ${threadId}`,
       );
+      flushing.set(threadId, work);
+      void work.finally(() => {
+        if (flushing.get(threadId) === work) flushing.delete(threadId);
+      });
     }, coalesceMs);
     timer.unref?.();
     pending.set(threadId, {
@@ -338,11 +349,19 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
     thread: ThreadResponse,
     entry: PendingThreadPush,
     allowedKinds: ReadonlySet<PushNotificationKind>,
-  ): Promise<{ kind: PushNotificationKind; body: string } | null> {
+  ): Promise<
+    | { kind: "decisions"; body: string; decisionSetId: string }
+    | { kind: Exclude<PushNotificationKind, "decisions">; body: string }
+    | null
+  > {
     const kinds = new Set(
       [...entry.kinds].filter((kind) => allowedKinds.has(kind)),
     );
     if (kinds.size === 0) return null;
+    if (kinds.has("decisions")) {
+      kinds.delete("turn-finished");
+      if (!thread.hasOpenDecisions) kinds.delete("decisions");
+    }
     let interaction: PendingInteraction | null = null;
     if (kinds.has("pending-interaction")) {
       const interactions = await bb.sdk.threads.interactions.list({
@@ -361,6 +380,17 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
     }
     const kind = pickKind(kinds);
     if (kind === null) return null;
+    if (kind === "decisions") {
+      const [decisionSet] = await bb.sdk.threads.experimental_decisions.list({
+        threadId: thread.id,
+      });
+      if (!decisionSet) return null;
+      return {
+        kind,
+        body: decisionSet.headline,
+        decisionSetId: decisionSet.id,
+      };
+    }
     if (kind === "pending-interaction") {
       return {
         kind,
@@ -408,16 +438,29 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
       NOTIFICATION_KINDS_BY_LEVEL[level],
     );
     if (resolved === null) return;
-    const preview = await notificationPreviewText(
-      resolved.body,
-      referencedThreadTitle,
-    );
-    await deliver({
-      title: threadDisplayTitle(thread),
+    const decisionsKey = `${DELIVERED_DECISIONS_KEY_PREFIX}${threadId}`;
+    if (
+      resolved.kind === "decisions" &&
+      (await bb.storage.kv.get<string>(decisionsKey)) === resolved.decisionSetId
+    ) {
+      return;
+    }
+    const preview =
+      resolved.kind === "decisions"
+        ? resolved.body
+        : await notificationPreviewText(resolved.body, referencedThreadTitle);
+    const channels = await deliver({
+      title:
+        resolved.kind === "decisions"
+          ? "Needs you"
+          : threadDisplayTitle(thread),
       body: preview || FALLBACK_BODIES[resolved.kind],
       kind: resolved.kind,
       thread,
     });
+    if (resolved.kind === "decisions" && channels.length > 0) {
+      await bb.storage.kv.set(decisionsKey, resolved.decisionSetId);
+    }
   }
 
   async function deliver(
@@ -489,6 +532,7 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
   }
 
   async function dismissThread(threadId: string): Promise<void> {
+    await bb.storage.kv.delete(`${DELIVERED_DECISIONS_KEY_PREFIX}${threadId}`);
     const key = `${DELIVERED_THREAD_KEY_PREFIX}${threadId}`;
     if ((await bb.storage.kv.get<unknown>(key)) === undefined) return;
     await bb.storage.kv.delete(key);
@@ -664,6 +708,7 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
     onThreadIdle({ thread, lastAssistantText }) {
       if (thread.visibility !== "visible") return;
       schedule(thread.id, "turn-finished", lastAssistantText ?? "");
+      if (thread.hasOpenDecisions) schedule(thread.id, "decisions", "");
     },
     onThreadRead({ thread }) {
       if (!running) return;

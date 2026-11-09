@@ -21,6 +21,11 @@ import type {
   ThreadCreateOrigin,
   ThreadQueuedMessage,
 } from "@bb/domain";
+import { resolveDispatchAuthor } from "./dispatch-author.js";
+import {
+  isUserDecisionAnswer,
+  resolveOpenDecisionsForUserMessage,
+} from "./thread-decisions.js";
 import { ApiError } from "../../errors.js";
 import {
   emitPluginMessageDispatched,
@@ -142,6 +147,30 @@ export function recordQueuedMessageWait(
           systemNotice: args.message.systemNotice,
           deliveryMode: args.message.deliveryMode,
         });
+        const author = resolveDispatchAuthor({
+          retrying: args.message.payload.kind === "retry",
+          systemNotice: args.message.systemNotice !== null,
+          senderThreadId: args.message.senderThreadId,
+          startedOnBehalfOf: args.message.requestedBy,
+        });
+        if (
+          isUserDecisionAnswer({
+            initiator: author.initiator,
+            origin: args.message.origin,
+            originPluginId: args.message.originPluginId,
+            input: args.message.input,
+          })
+        ) {
+          resolveOpenDecisionsForUserMessage(
+            tx,
+            {
+              threadId: args.thread.id,
+              requestRef: created.id,
+              input: args.message.input,
+            },
+            deps.hub,
+          );
+        }
         return args.placement === "front"
           ? moveQueuedThreadMessageToFrontInTransaction(tx, created)
           : created;

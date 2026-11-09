@@ -183,6 +183,7 @@ export interface PromptBoxSubmissionConfig extends Omit<
 > {
   onModifierSubmit?: (extras?: ComposerSubmitExtras) => void | Promise<void>;
   queuesDraft?: boolean;
+  draftRequiresInput?: boolean;
   swapSubmitActions?: boolean;
   showModifierSubmitAction?: boolean;
 }
@@ -230,6 +231,7 @@ function composerSubmission(
   const {
     onModifierSubmit,
     queuesDraft = false,
+    draftRequiresInput = true,
     swapSubmitActions = false,
     showModifierSubmitAction = false,
     ...state
@@ -241,7 +243,7 @@ function composerSubmission(
     };
   const draft = {
     kind: queuesDraft || swapSubmitActions ? "queue" : "send",
-    requiresInput: true,
+    requiresInput: draftRequiresInput,
     run: runReported(() => onSubmit()),
   } as const;
   const steer =
@@ -450,18 +452,19 @@ function useComposerRendererHostApi({
       if (host?.sendsOnEnter !== true) {
         throw new Error("This composer cannot submit programmatically.");
       }
-      const current = host.getCurrent();
-      if (
-        current.text.trim().length === 0 &&
-        current.attachments.length === 0
-      ) {
-        throw new Error("Type a message first.");
-      }
       const onModifierSubmit = submission?.onModifierSubmit;
       const runsSteer =
         mode === "steer-if-active"
           ? onModifierSubmit !== undefined
           : mode === "enter" && submission?.swapSubmitActions === true;
+      const current = host.getCurrent();
+      if (
+        current.text.trim().length === 0 &&
+        current.attachments.length === 0 &&
+        (runsSteer || submission?.draftRequiresInput !== false)
+      ) {
+        throw new Error("Type a message first.");
+      }
       const run = runsSteer ? onModifierSubmit : onSubmit;
       const voiceActive =
         voice?.state === "recording" || voice?.state === "transcribing";

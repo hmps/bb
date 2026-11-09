@@ -6,6 +6,7 @@ type FaviconSidebarThread = ThreadReadState &
   Pick<
     ThreadListEntry,
     | "hasPendingInteraction"
+    | "hasOpenDecisions"
     | "id"
     | "originKind"
     | "parentThreadId"
@@ -14,6 +15,7 @@ type FaviconSidebarThread = ThreadReadState &
 
 interface ShouldShowFaviconAttentionDotArgs {
   currentThreadHasPendingInteraction: boolean;
+  currentThreadHasOpenDecisions: boolean;
   currentThreadId?: string | null;
   isThreadView: boolean;
   sidebarThreads: readonly FaviconSidebarThread[];
@@ -25,7 +27,10 @@ function isUnreadSidebarThread(thread: FaviconSidebarThread): boolean {
 }
 
 function isPendingSidebarThread(thread: FaviconSidebarThread): boolean {
-  return isSidebarProjectThread(thread) && thread.hasPendingInteraction;
+  return (
+    isSidebarProjectThread(thread) &&
+    (thread.hasPendingInteraction || thread.hasOpenDecisions)
+  );
 }
 
 function isPendingDelegatedChildOfCurrentThread(
@@ -35,12 +40,13 @@ function isPendingDelegatedChildOfCurrentThread(
   return (
     thread.parentThreadId === currentThreadId &&
     thread.originKind === null &&
-    thread.hasPendingInteraction
+    (thread.hasPendingInteraction || thread.hasOpenDecisions)
   );
 }
 
 export function shouldShowFaviconAttentionDot({
   currentThreadHasPendingInteraction,
+  currentThreadHasOpenDecisions,
   currentThreadId,
   isThreadView,
   sidebarThreads,
@@ -54,6 +60,7 @@ export function shouldShowFaviconAttentionDot({
       );
     return (
       currentThreadHasPendingInteraction ||
+      currentThreadHasOpenDecisions ||
       childNeedsAttention ||
       Boolean(thread && !isThreadRead(thread))
     );

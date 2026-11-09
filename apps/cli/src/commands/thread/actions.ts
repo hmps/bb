@@ -26,10 +26,7 @@ import {
   prependErrorContext,
   requireThreadIdOrSelf,
 } from "../helpers.js";
-import {
-  resolveContextThreadId,
-  resolveExplicitIdFlag,
-} from "../../context-env.js";
+import { resolveExplicitIdFlag } from "../../context-env.js";
 import {
   parseParentNotifications,
   parsePermissionMode,
@@ -39,6 +36,7 @@ import {
   PERMISSION_MODE_HELP,
   PLAN_HELP,
   buildPromptInputs,
+  resolveSenderThreadId,
   uploadClientAttachmentInputs,
 } from "./helpers.js";
 import { SEND_AT_HELP, parseSendAt } from "./send-time.js";
@@ -816,14 +814,6 @@ export function describeQueueWait(row: {
     case "superseded":
       return "not sent: a newer message was sent after it";
   }
-}
-
-function resolveSenderThreadId(targetThreadId: string): string | undefined {
-  const senderThreadId = resolveContextThreadId();
-  if (!senderThreadId || senderThreadId === targetThreadId) {
-    return undefined;
-  }
-  return senderThreadId;
 }
 
 function resolveThreadMessageMode(

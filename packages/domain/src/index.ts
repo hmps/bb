@@ -15,6 +15,7 @@ export * from "./debounced-callback-scheduler.js";
 export * from "./environment-lifecycle.js";
 export * from "./environment.js";
 export * from "./experiments.js";
+export * from "./thread-decisions.js";
 export * from "./feature-flags.js";
 export * from "./git-checkout.js";
 export * from "./host-list-limits.js";

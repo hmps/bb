@@ -17,6 +17,17 @@ import {
 } from "@bb/sdk";
 import type { BbSdk } from "@bb/sdk/node";
 import { parseDurationMs } from "../../duration.js";
+import { resolveContextThreadId } from "../../context-env.js";
+
+export function resolveSenderThreadId(
+  targetThreadId: string,
+): string | undefined {
+  const senderThreadId = resolveContextThreadId();
+  if (!senderThreadId || senderThreadId === targetThreadId) {
+    return undefined;
+  }
+  return senderThreadId;
+}
 
 export const THREAD_WAIT_EXIT_CODE_TIMEOUT = 2;
 export const THREAD_WAIT_EXIT_CODE_INVALID_REQUEST = 3;

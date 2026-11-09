@@ -208,6 +208,11 @@ Use `--selected-model <model-id>` to discover its reasoning choices and include 
 - `bb thread clear`
 - `bb thread cancel-plan`
 - `bb thread clear-goal`
+- `bb thread decisions`
+- `bb thread decisions list`
+- `bb thread decisions show`
+- `bb thread decisions answer`
+- `bb thread decisions dismiss`
 - `bb thread interactions`
 - `bb thread interactions list`
 - `bb thread interactions show`

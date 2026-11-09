@@ -1092,7 +1092,7 @@ describe("threads", () => {
     expect(spy.notifyThread).toHaveBeenCalledWith(
       childThread.id,
       ["parent-changed"],
-      { projectId: project.id },
+      { projectId: project.id, previousParentThreadId: null },
     );
   });
 

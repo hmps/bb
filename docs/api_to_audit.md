@@ -3881,6 +3881,22 @@ runs one case table through both the core and the plugin inputs.
    its own "unread and done" predicate. Decide whether that predicate belongs
    in the SDK next to this function.
 
+## `PluginSidebarThread.experimental_hasOpenDecisions`
+
+This boolean reports an open decision set that needs user input. The server
+returns false while a non-archived child starts, runs, or stops. Clients use
+this value directly and do not repeat the child rule.
+
+**Core callers.** `toThreadStatusThread` maps the server flag for core lists
+and `toPluginSidebarThread`. `experimental_resolveThreadStatus` treats it as
+pending input for the thread and hidden thread rollups. The thread-list
+plugin uses the same resolver. The app also uses the server flag for favicon
+and desktop attention.
+
+**Audit before stabilizing.** Confirm that opening, answering, dismissing, and
+superseding decisions update sidebar rows. Check child start and completion
+refreshes, collapsed rows, and compatibility with older plugin bundles.
+
 ## `HostsArea.experimental_reconcile`
 
 Explicitly reconciles a provider-managed machine with core's recorded state.
@@ -4435,3 +4451,13 @@ precedence, bounded discovery failure, and module-ABI preservation after Node
 replacement. Settle the shared process-local instance lifecycle across SDK
 bundle versions and whether `bundledNpmCli` belongs on the public surface before
 removing the prefix.
+
+## `ThreadsArea.experimental_decisions`
+
+`list({ threadId, openOnly?, signal? })` returns open decision sets by default.
+Set `openOnly: false` to include history.
+`dismiss({ threadId, decisionSetId })` dismisses an open set.
+Answers use the normal thread message route.
+The thread composer, CLI decisions commands, and push notifications use these routes.
+Stabilize after the card, CLI, and notification paths pass integrated lifecycle checks.
+Audit validation, history limits, and resolution references before removing the prefix.

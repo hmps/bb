@@ -74,6 +74,11 @@ the most-parsed commands ends with the same shape.
   bb thread queue list <id> --json, bb thread interactions list <id> --json, bb thread history <id> --json
     bare arrays
 
+  bb thread decisions list <id> [--all] --json
+    Array of decision sets; open sets by default, history with --all.
+  bb thread decisions show <decision-set-id> <id> --json
+    One decision set, including its decisions, status, and resolution.
+
   bb project list --json
     [{id, kind, name, gitRemoteUrl, sources: [{id, hostId, path, isDefault}]}]    (bare array)
 

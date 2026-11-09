@@ -6,12 +6,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   PendingInteraction,
   PromptTextMention,
+  ThreadDecision,
   ThreadQueuedMessage,
   ThreadTimelineActivePromptMode,
   ThreadTimelineGoal,
   ThreadTimelineModelFallback,
   ThreadWithRuntime,
 } from "@bb/domain";
+import { defaultExperiments } from "@bb/domain";
 import {
   cleanup,
   fireEvent,
@@ -41,6 +43,9 @@ import {
   vi,
 } from "vitest";
 import { LazyQueuedMessagesList } from "@/components/promptbox/banner/LazyQueuedMessagesList";
+import { withDecisionAnswer } from "@/components/thread/decisions/decision-answer";
+import { systemConfigQueryKey } from "@/hooks/queries/query-keys";
+import { makeSystemConfig } from "@/test/fixtures/system-config";
 import { workflowRow } from "@/test/fixtures/thread-timeline-rows";
 import type { PromptDraftAttachment } from "@bb/client-core";
 import {
@@ -376,6 +381,8 @@ describe("shared draft submission ownership", () => {
 });
 
 beforeEach(() => {
+  mocks.decisionAnswers = null;
+  mocks.decisionSets = null;
   vi.mocked(usePromptDraftStorage).mockImplementation(() => ({
     ...mocks.promptDraft,
     value: mocks.promptDraft.text,
@@ -584,6 +591,117 @@ describe("ThreadDetailPromptArea", () => {
         pluginSubmission,
       }),
     );
+  });
+
+  it("hides the decision card during a handoff and restores its picks on return", async () => {
+    testQueryClient.setQueryData(
+      systemConfigQueryKey(),
+      makeSystemConfig({
+        experiments: { ...defaultExperiments, decisionCards: true },
+      }),
+    );
+    mocks.decisionSets = [
+      {
+        id: "tds_1",
+        threadId: "thr_1",
+        turnId: "turn_1",
+        toolCallId: "call_1",
+        headline: "One choice",
+        decisions: [
+          {
+            question: "Ship behind a flag?",
+            context: "Context.",
+            options: [
+              { label: "Flag it", does: "Only you see it" },
+              { label: "Ship to all", does: "Everyone gets it" },
+            ],
+            suggested: 0,
+            links: [],
+          },
+        ],
+        status: "open",
+        resolutionRequestId: null,
+        resolutionText: null,
+        createdAt: 1,
+        resolvedAt: null,
+      },
+    ];
+    mocks.promptDraft.text = "Keep going";
+    renderPromptArea({
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Pick second option" }),
+    );
+    expect(screen.getByTestId("decision-picks").textContent).toBe("0:1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch provider" }));
+    expect(screen.queryByTestId("decision-card")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Exit handoff" }));
+    expect(screen.getByTestId("decision-picks").textContent).toBe("0:1");
+  });
+
+  it("sends decision picks with the draft and clears them after the send", async () => {
+    const decisions: ThreadDecision[] = [
+      {
+        question: "Ship behind a flag?",
+        context: "Context.",
+        options: [
+          { label: "Flag it", does: "Only you see it" },
+          { label: "Ship to all", does: "Everyone gets it" },
+        ],
+        suggested: 0,
+        links: [],
+      },
+    ];
+    const picks = new Map([[0, 1]]);
+    const clear = vi.fn();
+    mocks.decisionAnswers = {
+      openSet: {
+        id: "tds_1",
+        threadId: "thr_1",
+        turnId: "turn_1",
+        toolCallId: "call_1",
+        headline: "One choice",
+        decisions,
+        status: "open",
+        resolutionRequestId: null,
+        resolutionText: null,
+        createdAt: 1,
+        resolvedAt: null,
+      },
+      picks,
+      pick: vi.fn(),
+      unpick: vi.fn(),
+      clear,
+      applyTo: (input) => withDecisionAnswer(input, decisions, picks),
+    };
+    mocks.promptDraft.text = "Also update the guide.";
+    renderPromptArea({
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Capture plugin host" }),
+    );
+
+    await act(async () => {
+      await mocks.composerSubmit?.();
+    });
+
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "thr_1",
+        input: [
+          {
+            type: "text",
+            text: "Decision 1 — Ship behind a flag?: Ship to all\nAlso update the guide.",
+            mentions: [],
+          },
+        ],
+      }),
+    );
+    expect(clear).toHaveBeenCalledTimes(1);
   });
 
   it("lets the server decide whether an Enter submitted while the thread looks busy queues", async () => {

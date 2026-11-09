@@ -1,4 +1,5 @@
 import {
+  type ThreadDecisionSet,
   type PromptInput,
   type PendingInteraction,
   type PendingInteractionResolution,
@@ -689,6 +690,17 @@ export interface ThreadsArea {
     args: ThreadPluginMetadataUpdateArgs,
   ): Promise<ThreadPluginMetadataResult>;
   queue: ThreadQueueArea;
+  experimental_decisions: {
+    list(args: {
+      threadId: string;
+      openOnly?: boolean;
+      signal?: AbortSignal;
+    }): Promise<ThreadDecisionSet[]>;
+    dismiss(args: {
+      threadId: string;
+      decisionSetId: string;
+    }): Promise<ThreadDecisionSet>;
+  };
   interactions: ThreadInteractionsArea;
   list(args?: ThreadListArgs): Promise<ThreadListResult>;
   listRunning(args?: { signal?: AbortSignal }): Promise<ThreadRunningResult>;
@@ -1446,6 +1458,28 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
       );
     },
     queue,
+    experimental_decisions: {
+      async list(input) {
+        return transport.readJson(
+          transport.api.v1.threads[":id"].decisions.$get(
+            {
+              param: { id: input.threadId },
+              query: { openOnly: input.openOnly === false ? "false" : "true" },
+            },
+            ...signalRequestArgs(input.signal),
+          ),
+        );
+      },
+      async dismiss(input) {
+        return transport.readJson(
+          transport.api.v1.threads[":id"].decisions[
+            ":decisionSetId"
+          ].dismiss.$post({
+            param: { id: input.threadId, decisionSetId: input.decisionSetId },
+          }),
+        );
+      },
+    },
     interactions,
     async list(input) {
       return transport.readJson(

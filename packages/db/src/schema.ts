@@ -21,6 +21,8 @@ import { threadOriginKindValues } from "@bb/domain/thread-origin-kind";
 import { threadParentNotificationsValues } from "@bb/domain/thread-parent-notifications";
 import { threadVisibilityValues } from "@bb/domain/thread-visibility";
 import type {
+  ThreadDecision,
+  ThreadDecisionStatus,
   EnvironmentProviderSelection,
   JsonValue,
   EnvironmentStatus,
@@ -992,6 +994,36 @@ export const promptHistoryEntries = sqliteTable(
       table.requestSequence,
       table.id,
     ),
+  ],
+);
+
+export const threadDecisions = sqliteTable(
+  "thread_decisions",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id"),
+    toolCallId: text("tool_call_id").notNull(),
+    headline: text("headline").notNull(),
+    decisions: text("payload", { mode: "json" })
+      .$type<ThreadDecision[]>()
+      .notNull(),
+    status: text("status").$type<ThreadDecisionStatus>().notNull(),
+    resolutionRequestId: text("resolution_request_id"),
+    resolutionText: text("resolution_text"),
+    createdAt: integer("created_at").notNull(),
+    resolvedAt: integer("resolved_at"),
+  },
+  (table) => [
+    index("thread_decisions_thread_created_idx").on(
+      table.threadId,
+      table.createdAt,
+    ),
+    uniqueIndex("thread_decisions_open_idx")
+      .on(table.threadId)
+      .where(sql`${table.status} = 'open'`),
   ],
 );
 

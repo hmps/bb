@@ -1185,9 +1185,12 @@ describe("ThreadRow", () => {
     ).toBeNull();
   });
 
-  it("shows the needs-input indicator when the thread needs user input", () => {
+  it.each([
+    { hasPendingInteraction: true },
+    { experimental_hasOpenDecisions: true },
+  ])("shows the needs-input indicator for %j", (attention) => {
     renderThreadRow({
-      thread: createThread({ hasPendingInteraction: true }),
+      thread: createThread(attention),
     });
 
     expect(renderedIndicators()).toEqual(["waiting-for-input"]);

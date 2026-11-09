@@ -135,10 +135,20 @@ function splitCompletedTurnMessages(
     );
   }
 
+  const trailing = messages.slice(terminalIndex + 1);
+  const decisionRequests = trailing.filter(
+    (message) =>
+      message.kind === "tool-call" && message.toolName === "request_decisions",
+  );
+  const decisionRequestIds = new Set(
+    decisionRequests.map((message) => message.id),
+  );
   return {
-    summaryMessages: messages.slice(0, terminalIndex),
+    summaryMessages: [...messages.slice(0, terminalIndex), ...decisionRequests],
     terminalMessages: [terminalMessageAtIndex],
-    trailingMessages: messages.slice(terminalIndex + 1),
+    trailingMessages: trailing.filter(
+      (message) => !decisionRequestIds.has(message.id),
+    ),
   };
 }
 

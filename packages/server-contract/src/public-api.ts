@@ -1,3 +1,4 @@
+import type { ThreadDecisionSet } from "@bb/domain";
 import {
   machineEnvironmentSetSchema,
   machineEnvironmentDeleteSchema,
@@ -249,6 +250,8 @@ import {
   type ThreadOpenResponse,
   type ThreadPaneActionRequest,
   type ThreadPaneActionResponse,
+  threadDecisionsQuerySchema,
+  type ThreadDecisionsQuery,
   type ThreadPendingInteractionsResponse,
   type ThreadRunningResponse,
   type QueuedMessageListQuery,
@@ -1636,6 +1639,20 @@ export const publicApiRoutes = {
         reorderPinnedThreadRequestSchema,
       ),
       response: jsonResponse<ThreadListResponse>(),
+    }),
+    decisions: defineRoute({
+      path: "/threads/:id/decisions",
+      method: "get",
+      request: queryRequest<PathId, ThreadDecisionsQuery>(
+        threadDecisionsQuerySchema,
+      ),
+      response: jsonResponse<ThreadDecisionSet[]>(),
+    }),
+    dismissDecision: defineRoute({
+      path: "/threads/:id/decisions/:decisionSetId/dismiss",
+      method: "post",
+      request: noRequest<{ param: { id: string; decisionSetId: string } }>(),
+      response: jsonResponse<ThreadDecisionSet>(),
     }),
     interactions: defineRoute({
       path: "/threads/:id/interactions",

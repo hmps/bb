@@ -1,4 +1,11 @@
-import { createEventId, getThread, type DbTransaction } from "@bb/db";
+import {
+  afterCommit,
+  createEventId,
+  dismissThreadDecisionSet,
+  getThread,
+  listOpenThreadDecisionSets,
+  type DbTransaction,
+} from "@bb/db";
 import {
   THREAD_CONTEXT_CLEAR_OPERATION,
   THREAD_CONTEXT_CLEARED_DETAIL,
@@ -13,6 +20,7 @@ import { appendThreadEvent } from "./thread-events.js";
 import { stopThreadForCurrentState } from "./thread-lifecycle.js";
 import { buildThreadStatusChangeMetadata } from "./thread-runtime-display.js";
 import { requestQueuedMessageDispatch } from "./queued-message-dispatch.js";
+import { notifyThreadDecisionsChanged } from "./thread-decisions.js";
 
 export async function clearThreadContext(
   deps: LoggedPendingInteractionWorkSessionDeps,
@@ -74,7 +82,21 @@ export async function clearThreadContext(
           message: THREAD_CONTEXT_CLEARED_DETAIL,
         },
       },
-      args.beforeCommitInTransaction,
+      ({ tx }) => {
+        args.beforeCommitInTransaction?.({ tx });
+        for (const set of listOpenThreadDecisionSets(tx, releasedThread.id)) {
+          dismissThreadDecisionSet(tx, {
+            threadId: releasedThread.id,
+            decisionSetId: set.id,
+          });
+          afterCommit(tx, () =>
+            notifyThreadDecisionsChanged(
+              { db: tx, hub: deps.hub },
+              releasedThread.id,
+            ),
+          );
+        }
+      },
     );
     deps.hub.notifyThread(
       releasedThread.id,

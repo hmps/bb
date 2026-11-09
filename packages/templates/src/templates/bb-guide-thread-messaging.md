@@ -1,7 +1,7 @@
 ---
 kind: instruction
 title: bb Guide — Thread messaging
-summary: Command reference for thread messages, ownership, interactions, and queued messages.
+summary: Command reference for thread messages, ownership, decision cards, interactions, and queued messages.
 intent: Document how agents talk to threads and manage their queues.
 editingNotes: Keep flags accurate against the CLI implementation. Run the json-flag-enforcement and command-output tests after changes.
 ---
@@ -84,6 +84,39 @@ Ownership:
   bb thread read [id]                      Mark read
   bb thread unread [id]                    Mark unread
   bb thread reorder-pinned <id> [--after <id>] [--before <id>]
+
+Decision cards:
+
+  bb thread decisions list [id]            List open decision sets
+    --all                                  Include answered, superseded, and dismissed sets
+  bb thread decisions show <decision-set-id> [id]
+                                           Show each decision, context, options, links, and suggested option
+  bb thread decisions answer <decision-set-id> [id] --pick 1=2 --pick 2=1
+    --pick <decision=option>               Select an option; repeat for other decisions
+    --text <text>                          Add free text, with or without picks
+  bb thread decisions dismiss <decision-set-id> [id]
+                                           Dismiss an open set without sending a message
+    --self                                 Target current thread (every subcommand)
+    --json                                 Machine-readable output (every subcommand)
+
+  Decision and option numbers start at 1, as printed by `show`.
+  Select at most one option per decision. Partial answers are allowed.
+  `answer` sends a normal user message in auto mode. Each pick adds one line:
+  `Decision N — <question>: <label>`. Free text follows on the next line.
+  An accepted user message answers the whole open set, including omitted decisions.
+  Agent and system messages do not answer it. Closed sets reject `answer` and `dismiss`.
+  `show` can read a closed set. `list --all` includes the history.
+  Read commands return raw decision sets with `--json`; `show` returns one set.
+  A queued answer is accepted. Do not send it again.
+
+  With the decisionCards experiment on, agents can call `request_decisions`.
+  The agent records a set, writes its reply, then ends its turn.
+  Turning off decision cards dismisses open sets. Retained runtimes receive the
+  tool on their next configuration after the experiment turns on.
+  SDK: `threads.experimental_decisions.list({ threadId, openOnly })` and
+  `threads.experimental_decisions.dismiss({ threadId, decisionSetId })`.
+  `openOnly` defaults to true. Set it to false for history.
+  Send answers with `threads.send`; there is no separate answer endpoint.
 
 Interactions:
 

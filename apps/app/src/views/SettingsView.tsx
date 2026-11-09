@@ -1119,6 +1119,10 @@ const EXPERIMENT_DEFINITIONS: Record<
   ExperimentKey,
   { label: string; description: string }
 > = {
+  decisionCards: {
+    label: "Decision cards",
+    description: "Let agents present choices in cards above the composer.",
+  },
   compactExpiredCache: {
     label: "Compact before resuming expired sessions",
     description:
