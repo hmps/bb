@@ -1,8 +1,13 @@
-import { and, desc, eq, sql } from "drizzle-orm";
-import type { RequestDecisionsInput, ThreadDecisionSet } from "@bb/domain";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import {
+  promptInputSchema,
+  type RequestDecisionsInput,
+  type ThreadDecisionSet,
+} from "@bb/domain";
 import type { DbQueryConnection } from "../connection.js";
 import { createThreadDecisionId } from "../ids.js";
-import { threadDecisions, threads } from "../schema.js";
+import { queuedThreadMessages, threadDecisions, threads } from "../schema.js";
+import { getExperiments } from "./experiments.js";
 
 export function createThreadDecisionSet(
   db: DbQueryConnection,
@@ -108,14 +113,47 @@ export function reopenThreadDecisionsForDeletedAnswer(
   db: DbQueryConnection,
   args: { threadId: string; requestRef: string },
 ): ThreadDecisionSet | null {
+  if (!getExperiments(db).decisionCards) return null;
+  const laterAnswer = db
+    .select({
+      id: queuedThreadMessages.id,
+      content: queuedThreadMessages.content,
+    })
+    .from(queuedThreadMessages)
+    .where(
+      and(
+        eq(queuedThreadMessages.threadId, args.threadId),
+        sql`${queuedThreadMessages}.rowid > (SELECT deleted.rowid FROM ${queuedThreadMessages} deleted WHERE deleted.id = ${args.requestRef})`,
+        ne(queuedThreadMessages.state, "claimed"),
+        sql`json_extract(${queuedThreadMessages.waitingOn}, '$.kind') IS NOT 'superseded'`,
+        eq(queuedThreadMessages.payloadKind, "inline"),
+        isNull(queuedThreadMessages.systemNotice),
+        isNull(queuedThreadMessages.senderThreadId),
+        isNull(queuedThreadMessages.requestedByInitiator),
+        sql`${queuedThreadMessages.origin} IS NOT 'plugin'`,
+        isNull(queuedThreadMessages.originPluginId),
+        sql`EXISTS (SELECT 1 FROM json_each(${queuedThreadMessages.content}) item WHERE json_extract(item.value, '$.visibility') IS NOT 'agent-only')`,
+      ),
+    )
+    .orderBy(sql`${queuedThreadMessages}.rowid`)
+    .limit(1)
+    .get();
+  const content = laterAnswer
+    ? promptInputSchema.array().parse(JSON.parse(laterAnswer.content))
+    : [];
   return (
     db
       .update(threadDecisions)
       .set({
-        status: "open",
-        resolutionRequestId: null,
-        resolutionText: null,
-        resolvedAt: null,
+        status: laterAnswer ? "answered" : "open",
+        resolutionRequestId: laterAnswer?.id ?? null,
+        resolutionText: laterAnswer
+          ? content
+              .filter((item) => item.type === "text")
+              .map((item) => item.text)
+              .join("\n")
+          : null,
+        resolvedAt: laterAnswer ? Date.now() : null,
       })
       .where(
         and(

@@ -1025,35 +1025,41 @@ describe("push sender", () => {
     }
   });
 
-  it("removes decision delivery storage when the notified thread is read", async () => {
-    const host = await setup({ dismissReadNotifications: true });
-    try {
-      const thread = host.setThread({ hasOpenDecisions: true });
-      const decision = openDecisionSet(thread.id);
-      host.decisions.set(thread.id, [decision]);
-      await host.harness.behavior.emitThreadEvent("thread.idle", {
-        thread,
-        lastAssistantText: null,
-      });
-      await vi.waitFor(() => expect(host.clientSignals()).toHaveLength(1));
-      expect(
-        await host.bb.storage.kv.get(`delivered-decisions:${thread.id}`),
-      ).toBe(decision.id);
-      await host.harness.behavior.emitThreadEvent("experimental_thread.read", {
-        thread: { ...thread, lastReadAt: 200 },
-      });
-      await vi.waitFor(async () => {
-        expect(
-          await host.bb.storage.kv.get(`delivered-thread:${thread.id}`),
-        ).toBeUndefined();
+  it.each([false, true])(
+    "removes decision delivery storage when the notified thread is read (dismissal: %s)",
+    async (dismissReadNotifications) => {
+      const host = await setup({ dismissReadNotifications });
+      try {
+        const thread = host.setThread({ hasOpenDecisions: true });
+        const decision = openDecisionSet(thread.id);
+        host.decisions.set(thread.id, [decision]);
+        await host.harness.behavior.emitThreadEvent("thread.idle", {
+          thread,
+          lastAssistantText: null,
+        });
+        await vi.waitFor(() => expect(host.clientSignals()).toHaveLength(1));
         expect(
           await host.bb.storage.kv.get(`delivered-decisions:${thread.id}`),
-        ).toBeUndefined();
-      });
-    } finally {
-      await host.cleanup();
-    }
-  });
+        ).toBe(decision.id);
+        await host.harness.behavior.emitThreadEvent(
+          "experimental_thread.read",
+          {
+            thread: { ...thread, lastReadAt: 200 },
+          },
+        );
+        await vi.waitFor(async () => {
+          expect(
+            await host.bb.storage.kv.get(`delivered-thread:${thread.id}`),
+          ).toBeUndefined();
+          expect(
+            await host.bb.storage.kv.get(`delivered-decisions:${thread.id}`),
+          ).toBeUndefined();
+        });
+      } finally {
+        await host.cleanup();
+      }
+    },
+  );
 
   it("sends no dismissal while the dismissReadNotifications experiment is off", async () => {
     const host = await setup({ dismissReadNotifications: false });

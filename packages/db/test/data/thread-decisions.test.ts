@@ -9,10 +9,13 @@ import {
   listThreadsWithPendingInteractionState,
 } from "../../src/data/threads.js";
 import { upsertHost } from "../../src/data/hosts.js";
+import { setExperiments } from "../../src/data/experiments.js";
 import { threadDecisions, threads } from "../../src/schema.js";
 import {
+  claimQueuedThreadMessageGroup,
   createQueuedThreadMessage,
   deleteQueuedThreadMessage,
+  type CreateQueuedThreadMessageInput,
 } from "../../src/data/queued-thread-messages.js";
 import {
   answerOpenThreadDecisionSets,
@@ -44,6 +47,7 @@ const input = {
 
 function setup() {
   const db = createMigratedConnection();
+  setExperiments(db, { decisionCards: true });
   const host = upsertHost(db, noopNotifier, { name: "test-host" });
   const { project } = createProject(db, noopNotifier, {
     name: "test",
@@ -56,7 +60,128 @@ function setup() {
   return { db, thread, project };
 }
 
+function queueAnswer(
+  db: ReturnType<typeof setup>["db"],
+  threadId: string,
+  text: string,
+  overrides: Partial<CreateQueuedThreadMessageInput> = {},
+) {
+  return createQueuedThreadMessage(db, noopNotifier, {
+    threadId,
+    content: [{ type: "text", text, mentions: [] }],
+    model: "gpt-5",
+    reasoningLevel: "medium",
+    permissionMode: "full",
+    serviceTier: "default",
+    waitingOn: { kind: "thread-busy" },
+    sendAt: null,
+    payload: { kind: "inline" },
+    systemNotice: null,
+    ...overrides,
+  });
+}
+
 describe("thread decision sets", () => {
+  it("keeps a later queued user answer when its resolution row is deleted", () => {
+    const { db, thread, project } = setup();
+    try {
+      queueAnswer(db, thread.id, "Before the decision");
+      const set = createThreadDecisionSet(db, {
+        ...input,
+        threadId: thread.id,
+      });
+      const first = queueAnswer(db, thread.id, "SQLite");
+      answerOpenThreadDecisionSets(db, {
+        threadId: thread.id,
+        requestRef: first.id,
+        text: "SQLite",
+      });
+      for (const overrides of [
+        { senderThreadId: thread.id },
+        { requestedBy: { initiator: "agent", senderThreadId: thread.id } },
+        { requestedBy: { initiator: "system", senderThreadId: thread.id } },
+        { origin: "plugin" },
+        { originPluginId: "test-plugin" },
+        {
+          content: [
+            {
+              type: "text",
+              text: "Hidden",
+              mentions: [],
+              visibility: "agent-only",
+            },
+          ],
+        },
+        { waitingOn: { kind: "superseded" } },
+        {
+          payload: {
+            kind: "retry",
+            retryOfTurnRequestId: "request-1",
+            attempt: 2,
+            reason: "Retry",
+          },
+        },
+        { systemNotice: { kind: "child-completed", subject: null } },
+      ] satisfies Partial<CreateQueuedThreadMessageInput>[]) {
+        queueAnswer(db, thread.id, "Not a user answer", overrides);
+      }
+      const claimed = queueAnswer(db, thread.id, "Already dispatching");
+      expect(
+        claimQueuedThreadMessageGroup(db, noopNotifier, claimed.id, {
+          kind: "explicit-send",
+        }),
+      ).not.toBeNull();
+      const otherThread = createThread(db, noopNotifier, {
+        projectId: project.id,
+        providerId: "codex",
+      });
+      queueAnswer(db, otherThread.id, "Answer in another thread");
+      const later = queueAnswer(db, thread.id, "Use Postgres instead");
+      expect(deleteQueuedThreadMessage(db, noopNotifier, first.id)).toBe(true);
+      expect(listThreadDecisionSets(db, { threadId: thread.id })).toMatchObject(
+        [
+          {
+            id: set.id,
+            status: "answered",
+            resolutionRequestId: later.id,
+            resolutionText: "Use Postgres instead",
+          },
+        ],
+      );
+      expect(hasOpenThreadDecisions(db, thread.id)).toBe(false);
+      expect(deleteQueuedThreadMessage(db, noopNotifier, later.id)).toBe(true);
+      expect(listOpenThreadDecisionSets(db, thread.id)).toMatchObject([
+        { id: set.id, resolutionRequestId: null, resolutionText: null },
+      ]);
+    } finally {
+      db.$client.close();
+    }
+  });
+
+  it("does not reopen a deleted queued answer when decision cards are off", () => {
+    const { db, thread } = setup();
+    try {
+      const set = createThreadDecisionSet(db, {
+        ...input,
+        threadId: thread.id,
+      });
+      const queued = queueAnswer(db, thread.id, "SQLite");
+      answerOpenThreadDecisionSets(db, {
+        threadId: thread.id,
+        requestRef: queued.id,
+        text: "SQLite",
+      });
+      setExperiments(db, { decisionCards: false });
+      expect(deleteQueuedThreadMessage(db, noopNotifier, queued.id)).toBe(true);
+      expect(listThreadDecisionSets(db, { threadId: thread.id })).toMatchObject(
+        [{ id: set.id, status: "answered", resolutionRequestId: queued.id }],
+      );
+      expect(hasOpenThreadDecisions(db, thread.id)).toBe(false);
+    } finally {
+      db.$client.close();
+    }
+  });
+
   it.each([false, true])(
     "keeps deletion and decision reopening atomic (newer: %s)",
     (withNewer) => {
@@ -66,18 +191,7 @@ describe("thread decision sets", () => {
           ...input,
           threadId: thread.id,
         });
-        const queued = createQueuedThreadMessage(db, noopNotifier, {
-          threadId: thread.id,
-          content: [{ type: "text", text: "Yes", mentions: [] }],
-          model: "gpt-5",
-          reasoningLevel: "medium",
-          permissionMode: "full",
-          serviceTier: "default",
-          waitingOn: { kind: "thread-busy" },
-          sendAt: null,
-          payload: { kind: "inline" },
-          systemNotice: null,
-        });
+        const queued = queueAnswer(db, thread.id, "Yes");
         answerOpenThreadDecisionSets(db, {
           threadId: thread.id,
           requestRef: queued.id,

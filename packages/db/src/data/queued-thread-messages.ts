@@ -2658,14 +2658,14 @@ export function deleteQueuedThreadMessage(
       const existing = getQueuedThreadMessage(tx, id);
       if (!existing) return null;
       clearPreviousQueuedMessageGroupEdgeInTransaction(tx, existing);
-      tx.delete(queuedThreadMessages)
-        .where(eq(queuedThreadMessages.id, id))
-        .run();
-      const reopened = reopenThreadDecisionsForDeletedAnswer(tx, {
+      const decisionSet = reopenThreadDecisionsForDeletedAnswer(tx, {
         threadId: existing.threadId,
         requestRef: id,
       });
-      if (reopened) {
+      tx.delete(queuedThreadMessages)
+        .where(eq(queuedThreadMessages.id, id))
+        .run();
+      if (decisionSet) {
         afterCommit(tx, () =>
           notifier.notifyThread(existing.threadId, ["decisions-changed"], {
             hasOpenDecisions: hasOpenThreadDecisions(tx, existing.threadId),

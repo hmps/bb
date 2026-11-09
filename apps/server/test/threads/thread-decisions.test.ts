@@ -439,6 +439,7 @@ describe("decision resolution at acceptance", () => {
     "reopens a deleted queued answer only without a newer set (%s)",
     async (newerStatus) => {
       await withTestHarness(async (harness) => {
+        setExperiments(harness.db, { decisionCards: true });
         const { thread } = seed(harness, "active");
         const set = open(harness, thread);
         const queued = await createQueuedMessageForThread(harness.deps, {
