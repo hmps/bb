@@ -16,7 +16,7 @@ Thread commands are split across four chapters:
   threads            Spawning, handing off, forking, and editing sent messages
   thread-inspection  Listing, sections, inspecting, waiting, opening in the app,
                      and panel tabs
-  thread-messaging   Messages, plan mode, metadata and ownership, interactions,
+  thread-messaging   Messages, plan mode, metadata and ownership, decision cards, interactions,
                      and queued messages
   thread-lifecycle   Stop, compact, clear, retry, archive, and delete
 

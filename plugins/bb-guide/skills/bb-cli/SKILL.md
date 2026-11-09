@@ -26,7 +26,7 @@ bb status --json
 | ----------------------------------------------------------------------- | ------------------------------ |
 | Spawn, hand off, or fork threads; edit a sent message                   | `bb guide threads`             |
 | List, inspect, wait on, or open threads                                 | `bb guide thread-inspection`   |
-| Message threads, answer interactions, manage queues                     | `bb guide thread-messaging`    |
+| Message threads, answer decision cards or interactions, manage queues   | `bb guide thread-messaging`    |
 | Stop, clear, compact, retry, archive, or delete threads                 | `bb guide thread-lifecycle`    |
 | Worktree setup hooks, environment inspection, commits, pull requests    | `bb guide environments`        |
 | Enroll, create, update, suspend, or remove machines; move the server    | `bb guide machines`            |
