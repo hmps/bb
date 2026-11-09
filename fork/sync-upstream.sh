@@ -31,10 +31,29 @@ theirs_tags="$(git show "${upstream_ref}:${journal}" | journal_tags)"
 fork_only="$(comm -23 <(cut -f2 <<<"$ours_tags" | sort) <(cut -f2 <<<"$theirs_tags" | sort))"
 upstream_new="$(comm -13 <(cut -f2 <<<"$ours_tags" | sort) <(cut -f2 <<<"$theirs_tags" | sort))"
 
+if [[ -n "$fork_only" ]]; then
+  while read -r tag; do
+    if [[ ! "$tag" =~ ^[0-9]{4}_fork_ ]]; then
+      echo "error: fork migration ${tag} must have a NNNN_fork_ name; create fork migrations with 'drizzle-kit generate --name fork_<name>'" >&2
+      exit 1
+    fi
+    if ! git show "HEAD:${drizzle_dir}/${tag}.sql" | node -e '
+      const statements = require("fs").readFileSync(0, "utf8")
+        .split("--> statement-breakpoint")
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+      process.exit(statements.every((statement) => /^CREATE (TABLE|(UNIQUE )?INDEX) /i.test(statement)) ? 0 : 1);
+    '; then
+      echo "error: fork migration ${tag} must only create fork-owned tables and indexes" >&2
+      exit 1
+    fi
+  done <<<"$fork_only"
+fi
+
 if [[ -n "$fork_only" && -n "$upstream_new" ]]; then
   fork_count="$(wc -l <<<"$fork_only" | tr -d '[:space:]')"
   if (( fork_count > 1 )); then
-    echo "error: more than one fork migration needs regeneration; regenerate each separately to preserve its SQL hash" >&2
+    echo "error: this script supports one fork migration; see 'Fork migrations' in fork/README.md" >&2
     exit 1
   fi
 fi
@@ -81,11 +100,17 @@ if [[ -n "$fork_only" && -n "$upstream_new" ]]; then
     cat "${drizzle_dir}/${tag}.sql" >>"$new_sql"
   done <<<"$new_tags"
 
-  if diff -q <(tr -d '[:space:]' <"$fork_sql") <(tr -d '[:space:]' <"$new_sql") >/dev/null; then
-    echo "Regenerated SQL matches the old fork migrations: ${new_tags//$'\n'/, }"
+  if cmp -s "$fork_sql" "$new_sql"; then
+    echo "Regenerated SQL matches the old fork migration: ${new_tags}"
+  elif diff -q <(tr -d '[:space:]' <"$fork_sql") <(tr -d '[:space:]' <"$new_sql") >/dev/null; then
+    cp "$fork_sql" "${drizzle_dir}/${new_tags}.sql"
+    git add "${drizzle_dir}/${new_tags}.sql"
+    echo "Restored the old fork SQL bytes in ${new_tags}.sql; only whitespace differed"
   else
-    echo "warning: regenerated SQL differs from the old fork migrations. Review it:" >&2
+    echo "error: regenerated SQL differs from the old fork migration. Fork databases cannot match a changed hash:" >&2
     diff "$fork_sql" "$new_sql" >&2 || true
+    rm -f "$fork_sql" "$new_sql"
+    exit 1
   fi
   rm -f "$fork_sql" "$new_sql"
 fi

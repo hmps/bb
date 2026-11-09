@@ -89,55 +89,57 @@ export function repairForkMigrationOrder(
   const applied = readApplied.all();
   const appliedWhens = new Set(applied.map((row) => row.createdAt));
 
-  for (const migration of migrations) {
-    if (!migration.fork || appliedWhens.has(migration.folderMillis)) continue;
-    if (
-      migrations.filter((entry) => entry.hash === migration.hash).length !== 1
-    )
-      continue;
-    const matches = applied.filter((row) => row.hash === migration.hash);
-    if (matches.length !== 1) continue;
-    const row = matches[0];
-    if (row.createdAt !== null && journalWhens.has(row.createdAt)) continue;
-
-    sqlite
-      .prepare("UPDATE __drizzle_migrations SET created_at = ? WHERE rowid = ?")
-      .run(migration.folderMillis, row.rowId);
-    appliedWhens.delete(row.createdAt);
-    appliedWhens.add(migration.folderMillis);
-    row.createdAt = migration.folderMillis;
-  }
-
-  const latest = sqlite
-    .prepare<[], { createdAt: number | null }>(
-      "SELECT MAX(created_at) AS createdAt FROM __drizzle_migrations",
-    )
-    .get()?.createdAt;
-  if (latest === null || latest === undefined) return;
-
-  for (const migration of migrations) {
-    if (
-      migration.fork ||
-      appliedWhens.has(migration.folderMillis) ||
-      migration.folderMillis >= latest ||
-      excludedTags.includes(migration.tag) ||
-      applied.some(
-        (row) =>
-          row.createdAt !== null &&
-          row.createdAt > migration.folderMillis &&
-          !forkWhens.has(row.createdAt),
+  sqlite.transaction(() => {
+    for (const migration of migrations) {
+      if (!migration.fork || appliedWhens.has(migration.folderMillis)) continue;
+      if (
+        migrations.filter((entry) => entry.hash === migration.hash).length !== 1
       )
-    )
-      continue;
+        continue;
+      const matches = applied.filter((row) => row.hash === migration.hash);
+      if (matches.length !== 1) continue;
+      const row = matches[0];
+      if (row.createdAt !== null && journalWhens.has(row.createdAt)) continue;
 
-    sqlite.transaction(() => {
+      sqlite
+        .prepare(
+          "UPDATE __drizzle_migrations SET created_at = ? WHERE rowid = ?",
+        )
+        .run(migration.folderMillis, row.rowId);
+      appliedWhens.delete(row.createdAt);
+      appliedWhens.add(migration.folderMillis);
+      row.createdAt = migration.folderMillis;
+    }
+
+    const latest = sqlite
+      .prepare<[], { createdAt: number | null }>(
+        "SELECT MAX(created_at) AS createdAt FROM __drizzle_migrations",
+      )
+      .get()?.createdAt;
+    if (latest === null || latest === undefined) return;
+
+    for (const migration of migrations) {
+      if (
+        migration.fork ||
+        appliedWhens.has(migration.folderMillis) ||
+        migration.folderMillis >= latest ||
+        excludedTags.includes(migration.tag) ||
+        applied.some(
+          (row) =>
+            row.createdAt !== null &&
+            row.createdAt > migration.folderMillis &&
+            !forkWhens.has(row.createdAt),
+        )
+      )
+        continue;
+
       for (const statement of migration.sql) sqlite.exec(statement);
       sqlite
         .prepare(
           "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
         )
         .run(migration.hash, migration.folderMillis);
-    })();
-    appliedWhens.add(migration.folderMillis);
-  }
+      appliedWhens.add(migration.folderMillis);
+    }
+  })();
 }

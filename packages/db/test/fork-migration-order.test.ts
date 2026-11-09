@@ -130,6 +130,32 @@ describe("repairForkMigrationOrder", () => {
     expectCompleteLedger(db, folder);
   });
 
+  it("relocates a fork row and applies skipped upstream rows in one run", () => {
+    const db = createDatabase([upstream, fork]);
+    db.$client.exec("INSERT INTO cards (id) VALUES (7)");
+    const later: Migration = {
+      tag: "0002_later",
+      when: 350,
+      sql: "CREATE TABLE later (id INTEGER PRIMARY KEY);",
+    };
+    const folder = createFolder([
+      upstream,
+      skipped,
+      later,
+      { ...fork, tag: "0003_fork_cards", when: 400 },
+    ]);
+
+    repairAndMigrate(db, folder);
+
+    expect(readTables(db)).toEqual(
+      expect.arrayContaining(["cards", "later", "skipped"]),
+    );
+    expect(db.$client.prepare("SELECT id FROM cards").all()).toEqual([
+      { id: 7 },
+    ]);
+    expectCompleteLedger(db, folder);
+  });
+
   it("leaves ambiguous journal hashes in place (A3)", () => {
     const emptyFork = { ...fork, sql: "SELECT 1;" };
     const db = createDatabase([upstream, emptyFork]);

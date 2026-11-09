@@ -14,10 +14,11 @@ proof: packages/db/test/fork-migration-order.test.ts covers skipped upstream SQL
 ## Details
 
 - Drizzle skips upstream migrations whose timestamps precede the latest applied fork migration. The script regenerates the fork migration last.
-- Create new fork migrations with `drizzle-kit generate --name fork_<x>`. Tags must match `NNNN_fork_<x>` so the repair can identify them.
-- The script uses the old tag suffix when it generates the replacement. It stops if more than one fork migration needs regeneration. Regenerate each separately to preserve its SQL hash.
+- Create new fork migrations with `drizzle-kit generate --name fork_<x>`. Tags must match `NNNN_fork_<x>` so the repair can identify them. The script stops on other names.
+- Fork migrations only create fork-owned tables and indexes. Upstream table rebuilds drop fork columns on upstream tables without an error. The script stops on other statements.
+- The script uses the old tag suffix when it generates the replacement. It supports one fork migration only. Extend the script before you add a second one. It stops when the regenerated SQL differs from the old SQL in more than whitespace.
 - Before Drizzle runs, bb moves a uniquely identified fork ledger row from an obsolete timestamp to its current journal timestamp. The SQL hash must match exactly.
-- bb applies skipped upstream entries only when every later ledger row identifies a fork migration. Each entry and its ledger insert share one transaction.
+- bb applies skipped upstream entries only when every later ledger row identifies a fork migration. The relocation and all repaired entries share one transaction.
 - Existing cleanup paths retain their excluded entries. Other history holes and ambiguous fork hashes remain errors. A database reset is not part of this repair.
 - Always merge an upstream sync. Never rebase or squash it, or the next merge repeats old conflicts.
 - Fork feature PRs go to hmps/bb (`-R hmps/bb` if gh has no default). get-bb/bb auto-closes PRs from authors that are not on its allow list.

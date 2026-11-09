@@ -22,8 +22,14 @@ Always merge. Do not rebase or squash an upstream sync. The merge commit records
 - It turns on `git rerere`, so git replays a conflict resolution that you made before.
 - It merges `upstream/main` without a commit.
 - It moves the fork database migration after upstream's migrations. It takes upstream's Drizzle journal and snapshots, removes the old fork migration, and generates it again.
-- It preserves the fork migration name with `drizzle-kit generate --name <old suffix>`. Then it compares the new SQL with the old SQL.
-- It stops with an error if more than one fork migration needs regeneration. Regenerate each separately to preserve its SQL hash.
+- It preserves the fork migration name with `drizzle-kit generate --name <old suffix>`. Then it compares the new SQL with the old SQL. When only whitespace differs, it restores the old bytes. Any other difference stops the script, because fork databases identify the migration by its exact SQL hash.
+- It stops with an error when a fork migration breaks the rules in "Fork migrations".
+
+## Fork migrations
+
+- Name each fork migration `NNNN_fork_<x>`. Create it with `pnpm --filter @bb/db exec drizzle-kit generate --name fork_<x>`, not with `pnpm db:generate`.
+- A fork migration must only contain `CREATE TABLE` and `CREATE INDEX` statements for fork-owned tables. Do not alter upstream tables. Upstream migrations rebuild their tables and copy only the columns that upstream knows, so a fork column on an upstream table loses its data.
+- The script supports one fork migration. drizzle-kit puts all fork schema changes into one generated migration, so the script cannot regenerate two migrations separately. Extend the script before you add a second fork migration.
 
 ## Why the migrations move
 
@@ -33,7 +39,7 @@ Create new fork migrations with `drizzle-kit generate --name fork_<x>`. Every fo
 
 Before Drizzle runs, bb moves an applied fork migration's ledger row to its new timestamp when its SQL hash identifies one migration. The old timestamp must be absent from the current journal. This prevents Drizzle from running the same fork SQL again. Ambiguous hashes remain unchanged.
 
-bb also applies skipped upstream migrations when every later ledger row identifies a fork migration. Each repaired entry runs in a transaction with its ledger insert. This supplies prerequisites before Drizzle runs newer migrations. Existing cleanup paths still own their excluded migrations. Other history errors still stop startup.
+bb also applies skipped upstream migrations when every later ledger row identifies a fork migration. The relocation and all repaired entries run in one transaction. This supplies prerequisites before Drizzle runs newer migrations. Existing cleanup paths still own their excluded migrations. Other history errors still stop startup.
 
 ## Checks
 
