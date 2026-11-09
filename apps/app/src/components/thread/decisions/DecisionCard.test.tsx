@@ -16,6 +16,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PromptInput, ThreadDecisionSet } from "@bb/domain";
 import { CompactViewportOverrideProvider } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { AppCommandProvider } from "@/components/commands/AppCommandProvider";
+import { getMessageLinkPath } from "@bb/client-core";
+import { getThreadRoutePath } from "@/lib/route-paths";
+import { makeThreadResponse } from "@/test/fixtures/thread-responses";
 import { DecisionCard } from "./DecisionCard";
 import { useThreadDecisionAnswers } from "./useThreadDecisionAnswers";
 
@@ -23,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   decisionCards: true,
   list: vi.fn(),
   dismiss: vi.fn(),
+  getThread: vi.fn(),
 }));
 
 vi.mock("@/hooks/queries/system-queries", async () => {
@@ -51,6 +55,7 @@ vi.mock("@/lib/ws", () => ({
 vi.mock("@/lib/sdk", () => ({
   sdk: {
     threads: {
+      get: mocks.getThread,
       experimental_decisions: { list: mocks.list, dismiss: mocks.dismiss },
     },
   },
@@ -80,6 +85,7 @@ const decisionSet: ThreadDecisionSet = {
       links: [
         { label: "Plan", href: "https://example.com/plan" },
         { label: "Earlier thread", href: "@thread:thr_2222222222" },
+        { label: "Earlier message", href: "@thread:thr_3333333333#msg=7" },
       ],
     },
     {
@@ -180,6 +186,13 @@ function sentText(onSend: ReturnType<typeof renderCard>["onSend"]) {
 beforeEach(() => {
   mocks.decisionCards = true;
   mocks.list.mockReset().mockResolvedValue([decisionSet]);
+  mocks.getThread
+    .mockReset()
+    .mockImplementation(({ threadId }: { threadId: string }) =>
+      Promise.resolve(
+        makeThreadResponse({ id: threadId, projectId: "proj_archive" }),
+      ),
+    );
   mocks.dismiss.mockReset().mockResolvedValue({
     ...decisionSet,
     status: "dismissed",
@@ -226,11 +239,50 @@ describe("DecisionCard", () => {
     expect(
       screen.getByRole("link", { name: /Plan/ }).getAttribute("href"),
     ).toBe("https://example.com/plan");
-    expect(
-      screen.getByRole("link", { name: /Earlier thread/ }).getAttribute("href"),
-    ).toContain("thr_2222222222");
     expect(within(option(/Flag it/)).getByText("Recommended")).toBeTruthy();
     expect(within(option(/Ship to all/)).queryByText("Recommended")).toBeNull();
+  });
+
+  it("routes thread and message links to the target's project when the sidebar lacks it", async () => {
+    renderCard();
+    await screen.findByText("Ship behind a flag?");
+
+    expect(
+      (await screen.findByRole("link", { name: /Earlier thread/ })).getAttribute(
+        "href",
+      ),
+    ).toBe(
+      getThreadRoutePath({
+        projectId: "proj_archive",
+        threadId: "thr_2222222222",
+      }),
+    );
+    expect(
+      (
+        await screen.findByRole("link", { name: /Earlier message/ })
+      ).getAttribute("href"),
+    ).toBe(
+      getMessageLinkPath({
+        projectId: "proj_archive",
+        threadId: "thr_3333333333",
+        seq: 7,
+      }),
+    );
+    expect(mocks.getThread).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: "thr_2222222222" }),
+    );
+    expect(mocks.getThread).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: "thr_3333333333" }),
+    );
+  });
+
+  it("shows a thread link as plain text until its project resolves", async () => {
+    mocks.getThread.mockReset().mockReturnValue(new Promise(() => {}));
+    renderCard();
+    await screen.findByText("Ship behind a flag?");
+
+    expect(screen.getByText("Earlier thread")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Earlier thread/ })).toBeNull();
   });
 
   it("adds a chip per pick, moves to the next page, and removes chips", async () => {

@@ -21,7 +21,10 @@ import {
   PROMPT_STACK_CARD_ROW_HEIGHT,
   PromptStackCard,
 } from "@/components/promptbox/banner/PromptStackCard";
-import { useThreadRoutePath } from "@/components/thread/ThreadTitleMentions";
+import {
+  useThreadMentionResource,
+  useThreadRoutePath,
+} from "@/components/thread/ThreadTitleMentions";
 import {
   useMessageLinkRouting,
   useThreadTimelineNavigation,
@@ -522,10 +525,18 @@ function ThreadDecisionLink({
   threadId: string;
   messageSeq: number | null;
 }) {
+  const resource = useThreadMentionResource(threadId);
   const threadRoutePath = useThreadRoutePath();
+  if (resource?.kind !== "thread" || resource.projectId === undefined) {
+    return (
+      <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-muted-foreground">
+        <LinkLabel label={label} />
+      </span>
+    );
+  }
   return (
     <NavLink
-      to={threadRoutePath(threadId, undefined, messageSeq)}
+      to={threadRoutePath(threadId, resource.projectId, messageSeq)}
       className={LINK_CLASS}
     >
       <LinkLabel label={label} />
