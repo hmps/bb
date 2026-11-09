@@ -9,7 +9,11 @@ import {
   listThreadsWithPendingInteractionState,
 } from "../../src/data/threads.js";
 import { upsertHost } from "../../src/data/hosts.js";
-import { threads } from "../../src/schema.js";
+import { threadDecisions, threads } from "../../src/schema.js";
+import {
+  createQueuedThreadMessage,
+  deleteQueuedThreadMessage,
+} from "../../src/data/queued-thread-messages.js";
 import {
   answerOpenThreadDecisionSets,
   createThreadDecisionSet,
@@ -53,6 +57,71 @@ function setup() {
 }
 
 describe("thread decision sets", () => {
+  it.each([false, true])(
+    "keeps deletion and decision reopening atomic (newer: %s)",
+    (withNewer) => {
+      const { db, thread } = setup();
+      try {
+        const first = createThreadDecisionSet(db, {
+          ...input,
+          threadId: thread.id,
+        });
+        const queued = createQueuedThreadMessage(db, noopNotifier, {
+          threadId: thread.id,
+          content: [{ type: "text", text: "Yes", mentions: [] }],
+          model: "gpt-5",
+          reasoningLevel: "medium",
+          permissionMode: "full",
+          serviceTier: "default",
+          waitingOn: { kind: "thread-busy" },
+          sendAt: null,
+          payload: { kind: "inline" },
+          systemNotice: null,
+        });
+        answerOpenThreadDecisionSets(db, {
+          threadId: thread.id,
+          requestRef: queued.id,
+          text: "Yes",
+        });
+        if (withNewer) {
+          const newer = createThreadDecisionSet(db, {
+            ...input,
+            threadId: thread.id,
+          });
+          dismissThreadDecisionSet(db, {
+            threadId: thread.id,
+            decisionSetId: newer.id,
+          });
+          db.update(threadDecisions)
+            .set({ createdAt: first.createdAt })
+            .where(eq(threadDecisions.threadId, thread.id))
+            .run();
+        }
+        expect(() =>
+          db.transaction(() => {
+            deleteQueuedThreadMessage(db, noopNotifier, queued.id);
+            throw new Error("rollback");
+          }),
+        ).toThrow("rollback");
+        expect(
+          listThreadDecisionSets(db, { threadId: thread.id }).find(
+            (row) => row.id === first.id,
+          )?.status,
+        ).toBe("answered");
+        expect(deleteQueuedThreadMessage(db, noopNotifier, queued.id)).toBe(
+          true,
+        );
+        expect(
+          listThreadDecisionSets(db, { threadId: thread.id }).find(
+            (row) => row.id === first.id,
+          )?.status,
+        ).toBe(withNewer ? "answered" : "open");
+      } finally {
+        db.$client.close();
+      }
+    },
+  );
+
   it("supersedes atomically, records the accepted answer, and dismisses only the requested open set", () => {
     const { db, thread } = setup();
     try {

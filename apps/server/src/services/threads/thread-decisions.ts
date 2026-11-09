@@ -15,6 +15,8 @@ import {
   requestDecisionsInputSchema,
   type DynamicTool,
   type PromptInput,
+  type ThreadCreateOrigin,
+  type ThreadTurnInitiator,
   type ToolCallResponse,
 } from "@bb/domain";
 import type { AppDeps } from "../../types.js";
@@ -36,6 +38,20 @@ export const REQUEST_DECISIONS_TOOL: DynamicTool = {
 };
 
 type DecisionDeps = { db: DbQueryConnection; hub: DbNotifier };
+
+export function isUserDecisionAnswer(args: {
+  initiator: ThreadTurnInitiator;
+  origin: ThreadCreateOrigin | null;
+  originPluginId: string | null;
+  input: PromptInput[];
+}): boolean {
+  return (
+    args.initiator === "user" &&
+    args.origin !== "plugin" &&
+    args.originPluginId === null &&
+    args.input.some((item) => item.visibility !== "agent-only")
+  );
+}
 
 export function notifyThreadDecisionsChanged(
   deps: DecisionDeps,

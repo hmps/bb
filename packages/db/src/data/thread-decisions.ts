@@ -104,6 +104,32 @@ export function dismissThreadDecisionSet(
   );
 }
 
+export function reopenThreadDecisionsForDeletedAnswer(
+  db: DbQueryConnection,
+  args: { threadId: string; requestRef: string },
+): ThreadDecisionSet | null {
+  return (
+    db
+      .update(threadDecisions)
+      .set({
+        status: "open",
+        resolutionRequestId: null,
+        resolutionText: null,
+        resolvedAt: null,
+      })
+      .where(
+        and(
+          eq(threadDecisions.threadId, args.threadId),
+          eq(threadDecisions.status, "answered"),
+          eq(threadDecisions.resolutionRequestId, args.requestRef),
+          sql`${threadDecisions.id} = (SELECT newest.id FROM ${threadDecisions} newest WHERE newest.thread_id = ${args.threadId} ORDER BY newest.rowid DESC LIMIT 1)`,
+        ),
+      )
+      .returning()
+      .get() ?? null
+  );
+}
+
 export function dismissAllOpenThreadDecisionSets(
   db: DbQueryConnection,
 ): ThreadDecisionSet[] {

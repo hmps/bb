@@ -39,6 +39,7 @@ import {
 } from "../helpers/seed.js";
 import { textInput } from "../helpers/prompt-input.js";
 import { internalAuthHeaders } from "../helpers/commands.js";
+import { registerHostRpcResponder } from "../helpers/host-rpc.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
 
 const decisionInput = {
@@ -121,6 +122,29 @@ function expectAnswered(
 }
 
 describe("decision tool and routes", () => {
+  it.each([false, true])(
+    "uses the effective decision experiment on unrelated updates (%s)",
+    async (enabled) => {
+      await withTestHarness(async (harness) => {
+        const { thread } = seed(harness);
+        setExperiments(harness.db, { decisionCards: enabled });
+        open(harness, thread);
+        const response = await harness.app.request(
+          "/api/v1/settings/experiments",
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({}),
+          },
+        );
+        expect(response.status).toBe(200);
+        expect(current(harness, thread).status).toBe(
+          enabled ? "open" : "dismissed",
+        );
+      });
+    },
+  );
+
   it.each(["codex", "claude-code"])(
     "records %s tool calls through the existing daemon endpoint and rejects retained calls when off",
     async (providerId) => {
@@ -291,6 +315,190 @@ describe("decision tool and routes", () => {
 });
 
 describe("decision resolution at acceptance", () => {
+  for (const kind of [
+    "immediate",
+    "automatic queue",
+    "explicit queue",
+  ] as const) {
+    const sources =
+      kind === "explicit queue"
+        ? (["agent-only", "composer", "mixed"] as const)
+        : (["plugin", "agent-only", "composer", "mixed"] as const);
+    it.each(sources)(
+      `checks %s input at ${kind} acceptance`,
+      async (source) => {
+        await withTestHarness(async (harness) => {
+          const { thread } = seed(
+            harness,
+            kind === "immediate" ? "idle" : "active",
+          );
+          const set = open(harness, thread);
+          const agentOnly = textInput("Workflow finished").map((item) => ({
+            ...item,
+            visibility: "agent-only" as const,
+          }));
+          const request = {
+            ...payload,
+            input:
+              source === "agent-only"
+                ? agentOnly
+                : source === "mixed"
+                  ? [...agentOnly, ...payload.input]
+                  : payload.input,
+            ...(source === "plugin" ? { originPluginId: "workflows" } : {}),
+            ...(source === "composer"
+              ? {
+                  pluginSubmission: {
+                    pluginId: "composer",
+                    data: { kind: "answer" },
+                  },
+                }
+              : {}),
+          };
+          if (kind === "explicit queue") {
+            await createQueuedMessageForThread(harness.deps, {
+              thread,
+              payload: request,
+            });
+          } else {
+            await acceptThreadSendRequest(harness.deps, {
+              thread,
+              payload: request,
+            });
+          }
+          if (source === "plugin" || source === "agent-only") {
+            expect(
+              listOpenThreadDecisionSets(harness.db, thread.id).map(
+                (row) => row.id,
+              ),
+            ).toEqual([set.id]);
+          } else {
+            expect(current(harness, thread).status).toBe("answered");
+            expect(listOpenThreadDecisionSets(harness.db, thread.id)).toEqual(
+              [],
+            );
+          }
+        });
+      },
+    );
+  }
+
+  it("dismisses open decisions when /clear succeeds", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread, host, session } = seed(harness);
+      open(harness, thread);
+      const changes: string[] = [];
+      harness.hub.onChangedMessage((message) => {
+        if (message.entity === "thread") changes.push(...message.changes);
+      });
+      const responder = registerHostRpcResponder(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+        handle: async () => ({
+          ok: true,
+          result: { providerCheckpointId: null },
+        }),
+      });
+      try {
+        await acceptThreadSendRequest(harness.deps, {
+          thread,
+          payload: {
+            ...payload,
+            input: [
+              {
+                type: "text",
+                text: "/clear",
+                mentions: [
+                  {
+                    start: 0,
+                    end: 6,
+                    resource: {
+                      kind: "command",
+                      trigger: "/",
+                      name: "clear",
+                      source: "command",
+                      origin: "builtin",
+                      label: "/clear",
+                      argumentHint: null,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      } finally {
+        responder.unregister();
+      }
+      expect(current(harness, thread).status).toBe("dismissed");
+      expect(changes).toContain("decisions-changed");
+    });
+  });
+
+  it.each(["none", "open", "answered", "dismissed"] as const)(
+    "reopens a deleted queued answer only without a newer set (%s)",
+    async (newerStatus) => {
+      await withTestHarness(async (harness) => {
+        const { thread } = seed(harness, "active");
+        const set = open(harness, thread);
+        const queued = await createQueuedMessageForThread(harness.deps, {
+          thread,
+          payload,
+        });
+        let newerId: string | null = null;
+        if (newerStatus !== "none") {
+          const newer = open(harness, thread);
+          newerId = newer.id;
+          if (newerStatus === "answered") {
+            await createQueuedMessageForThread(harness.deps, {
+              thread,
+              payload,
+            });
+          } else if (newerStatus === "dismissed") {
+            await harness.app.request(
+              `/api/v1/threads/${thread.id}/decisions/${newer.id}/dismiss`,
+              { method: "POST" },
+            );
+          }
+        }
+        const changes: ThreadChangedMessage[] = [];
+        harness.hub.onChangedMessage((message) => {
+          if (
+            message.entity === "thread" &&
+            message.changes.includes("decisions-changed")
+          )
+            changes.push(message);
+        });
+        const response = await harness.app.request(
+          `/api/v1/threads/${thread.id}/queued-messages/${queued.id}`,
+          { method: "DELETE" },
+        );
+        expect(response.status).toBe(200);
+        const restored = listThreadDecisionSets(harness.db, {
+          threadId: thread.id,
+        }).find((row) => row.id === set.id)!;
+        expect(restored).toMatchObject(
+          newerId === null
+            ? {
+                status: "open",
+                resolutionRequestId: null,
+                resolutionText: null,
+                resolvedAt: null,
+              }
+            : { status: "answered", resolutionRequestId: queued.id },
+        );
+        expect(changes).toHaveLength(newerId === null ? 1 : 0);
+        if (newerId === null)
+          expect(changes[0]?.metadata?.hasOpenDecisions).toBe(true);
+        expect(
+          listQueuedThreadMessages(harness.db, thread.id).some(
+            (row) => row.id === queued.id,
+          ),
+        ).toBe(false);
+      });
+    },
+  );
+
   it.each(["immediate", "automatic queue", "explicit queue"] as const)(
     "answers at %s acceptance and records its request reference",
     async (kind) => {

@@ -1,4 +1,7 @@
-import { resolveOpenDecisionsForUserMessage } from "./thread-decisions.js";
+import {
+  isUserDecisionAnswer,
+  resolveOpenDecisionsForUserMessage,
+} from "./thread-decisions.js";
 import {
   requestQueuedMachineReadiness,
   requestQueuedMessageDispatch,
@@ -753,7 +756,12 @@ async function runDispatchAttempt(
         }
         if (
           claimed === null &&
-          author.initiator === "user" &&
+          isUserDecisionAnswer({
+            initiator: author.initiator,
+            origin: args.origin,
+            originPluginId: args.originPluginId,
+            input: payload.input,
+          }) &&
           requestId !== null
         ) {
           resolveOpenDecisionsForUserMessage(

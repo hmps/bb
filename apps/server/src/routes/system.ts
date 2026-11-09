@@ -391,9 +391,9 @@ export function registerSystemRoutes(
   put(routes.experiments, (context, payload) => {
     const dismissed = deps.db.transaction((tx) => {
       setExperiments(tx, payload);
-      return payload.decisionCards === false
-        ? dismissAllOpenThreadDecisionSets(tx)
-        : [];
+      return getExperiments(tx).decisionCards
+        ? []
+        : dismissAllOpenThreadDecisionSets(tx);
     });
     for (const set of dismissed)
       notifyThreadDecisionsChanged(deps, set.threadId);

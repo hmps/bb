@@ -22,7 +22,10 @@ import type {
   ThreadQueuedMessage,
 } from "@bb/domain";
 import { resolveDispatchAuthor } from "./dispatch-author.js";
-import { resolveOpenDecisionsForUserMessage } from "./thread-decisions.js";
+import {
+  isUserDecisionAnswer,
+  resolveOpenDecisionsForUserMessage,
+} from "./thread-decisions.js";
 import { ApiError } from "../../errors.js";
 import {
   emitPluginMessageDispatched,
@@ -150,7 +153,14 @@ export function recordQueuedMessageWait(
           senderThreadId: args.message.senderThreadId,
           startedOnBehalfOf: args.message.requestedBy,
         });
-        if (author.initiator === "user") {
+        if (
+          isUserDecisionAnswer({
+            initiator: author.initiator,
+            origin: args.message.origin,
+            originPluginId: args.message.originPluginId,
+            input: args.message.input,
+          })
+        ) {
           resolveOpenDecisionsForUserMessage(
             tx,
             {

@@ -1,4 +1,7 @@
-import { resolveOpenDecisionsForUserMessage } from "./thread-decisions.js";
+import {
+  isUserDecisionAnswer,
+  resolveOpenDecisionsForUserMessage,
+} from "./thread-decisions.js";
 import { resolveDispatchAuthor } from "./dispatch-author.js";
 import {
   isAppUpdateSendHoldSet,
@@ -252,7 +255,14 @@ export async function createQueuedMessageForThread(
           senderThreadId,
           startedOnBehalfOf: null,
         });
-        if (author.initiator === "user") {
+        if (
+          isUserDecisionAnswer({
+            initiator: author.initiator,
+            origin: null,
+            originPluginId: null,
+            input,
+          })
+        ) {
           resolveOpenDecisionsForUserMessage(
             tx,
             { threadId: thread.id, requestRef: queuedMessage.id, input },

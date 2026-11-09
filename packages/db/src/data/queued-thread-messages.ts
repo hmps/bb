@@ -62,6 +62,11 @@ import {
 import { createOrderKeyAfter, createOrderKeyBetween } from "./order-keys.js";
 import { queryInSqliteVariableBatches } from "./sqlite-variable-batches.js";
 import { liveThread } from "./threads.js";
+import {
+  hasOpenThreadDecisions,
+  reopenThreadDecisionsForDeletedAnswer,
+} from "./thread-decisions.js";
+import { afterCommit } from "../connection.js";
 
 export interface CreateQueuedThreadMessageInput {
   threadId: string;
@@ -2656,6 +2661,17 @@ export function deleteQueuedThreadMessage(
       tx.delete(queuedThreadMessages)
         .where(eq(queuedThreadMessages.id, id))
         .run();
+      const reopened = reopenThreadDecisionsForDeletedAnswer(tx, {
+        threadId: existing.threadId,
+        requestRef: id,
+      });
+      if (reopened) {
+        afterCommit(tx, () =>
+          notifier.notifyThread(existing.threadId, ["decisions-changed"], {
+            hasOpenDecisions: hasOpenThreadDecisions(tx, existing.threadId),
+          }),
+        );
+      }
       return existing;
     },
     { behavior: "immediate" },
