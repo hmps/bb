@@ -4452,7 +4452,7 @@ replacement. Settle the shared process-local instance lifecycle across SDK
 bundle versions and whether `bundledNpmCli` belongs on the public surface before
 removing the prefix.
 
-## ThreadsArea.experimental_decisions
+## `ThreadsArea.experimental_decisions`
 
 `list({ threadId, openOnly?, signal? })` returns open decision sets by default.
 Set `openOnly: false` to include history.
