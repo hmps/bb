@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8a1805e5-e7cc-4519-9ff9-73f447c674e9",
+  "id": "89ac4b8a-45f4-4c5d-81af-880c10ae2d5e",
   "prevId": "78bdb439-f973-400a-8a92-3d57a5d420b5",
   "tables": {
     "app_settings": {
@@ -3915,6 +3915,66 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "sweep_item_failures": {
+      "name": "sweep_item_failures",
+      "columns": {
+        "sweep": {
+          "name": "sweep",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_key": {
+          "name": "item_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "first_failed_at": {
+          "name": "first_failed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "retry_at": {
+          "name": "retry_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "sweep_item_failures_sweep_item_key_pk": {
+          "columns": [
+            "sweep",
+            "item_key"
+          ],
+          "name": "sweep_item_failures_sweep_item_key_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "system_experiments": {
       "name": "system_experiments",
       "columns": {
@@ -4194,124 +4254,6 @@
         "thread_conversation_outlines_thread_id_threads_id_fk": {
           "name": "thread_conversation_outlines_thread_id_threads_id_fk",
           "tableFrom": "thread_conversation_outlines",
-          "tableTo": "threads",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "thread_decisions": {
-      "name": "thread_decisions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "thread_id": {
-          "name": "thread_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "turn_id": {
-          "name": "turn_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "tool_call_id": {
-          "name": "tool_call_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "headline": {
-          "name": "headline",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "payload": {
-          "name": "payload",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "resolution_request_id": {
-          "name": "resolution_request_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "resolution_text": {
-          "name": "resolution_text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "thread_decisions_thread_created_idx": {
-          "name": "thread_decisions_thread_created_idx",
-          "columns": [
-            "thread_id",
-            "created_at"
-          ],
-          "isUnique": false
-        },
-        "thread_decisions_open_idx": {
-          "name": "thread_decisions_open_idx",
-          "columns": [
-            "thread_id"
-          ],
-          "isUnique": true,
-          "where": "\"thread_decisions\".\"status\" = 'open'"
-        }
-      },
-      "foreignKeys": {
-        "thread_decisions_thread_id_threads_id_fk": {
-          "name": "thread_decisions_thread_id_threads_id_fk",
-          "tableFrom": "thread_decisions",
           "tableTo": "threads",
           "columnsFrom": [
             "thread_id"

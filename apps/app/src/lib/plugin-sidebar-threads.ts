@@ -1,6 +1,7 @@
 import type { ThreadListEntry } from "@bb/domain";
 import type {
   PluginSidebarThread,
+  PluginSidebarThreadActivity,
   PluginThreadStatusThread,
 } from "@get-bb/plugin-sdk";
 import { experimental_resolveThreadStatus } from "@get-bb/plugin-sdk/internal/thread-status";
@@ -13,22 +14,26 @@ import {
 import { getThreadDisplayTitle } from "./thread-title";
 import { getThreadRoutePath } from "./route-paths";
 
+type PluginSidebarThreadActivityWithRetiredGoals =
+  PluginSidebarThreadActivity & { goals: 0 };
+
 export function toThreadStatusThread(
   entry: ThreadListEntry,
 ): PluginThreadStatusThread {
+  const activity: PluginSidebarThreadActivityWithRetiredGoals = {
+    workflows: entry.activity.activeWorkflowCount,
+    backgroundAgents: entry.activity.activeBackgroundAgentCount,
+    backgroundCommands: entry.activity.activeBackgroundCommandCount,
+    planMode: entry.activity.activePlanModeCount,
+    goals: 0,
+  };
   return {
     status: entry.status,
     runtimeStatus: entry.runtime.displayStatus,
     queuedWork: entry.queuedWork,
     hasPendingInteraction: entry.hasPendingInteraction,
     experimental_hasOpenDecisions: entry.hasOpenDecisions,
-    activity: {
-      workflows: entry.activity.activeWorkflowCount,
-      backgroundAgents: entry.activity.activeBackgroundAgentCount,
-      backgroundCommands: entry.activity.activeBackgroundCommandCount,
-      planMode: entry.activity.activePlanModeCount,
-      goals: entry.activity.activeGoalCount,
-    },
+    activity,
     isUnread: !isThreadRead(entry),
     parentThreadId: entry.parentThreadId,
   };
