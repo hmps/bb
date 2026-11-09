@@ -535,6 +535,7 @@ export function createPushSender(args: CreatePushSenderArgs): PushSender {
     const key = `${DELIVERED_THREAD_KEY_PREFIX}${threadId}`;
     if ((await bb.storage.kv.get<unknown>(key)) === undefined) return;
     await bb.storage.kv.delete(key);
+    await bb.storage.kv.delete(`${DELIVERED_DECISIONS_KEY_PREFIX}${threadId}`);
     if (!(await args.isDismissalEnabled())) return;
     bb.realtime.publish(CLIENT_NOTIFICATION_DISMISS_CHANNEL, {
       threadId,
