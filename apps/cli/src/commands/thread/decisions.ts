@@ -10,7 +10,7 @@ import {
   outputJson,
   requireThreadIdOrSelf,
 } from "../helpers.js";
-import { buildPromptInputs } from "./helpers.js";
+import { buildPromptInputs, resolveSenderThreadId } from "./helpers.js";
 
 interface DecisionTargetOptions {
   self?: boolean;
@@ -157,7 +157,7 @@ export function registerDecisionCommands(
 
   decisions
     .command("answer <decisionSetId> [id]")
-    .description("Send decision picks and free text as a normal user message")
+    .description("Send decision picks and free text as a normal thread message")
     .option("--self", "Target the current thread (from BB_THREAD_ID)")
     .option(
       "--pick <decision=option>",
@@ -191,6 +191,7 @@ export function registerDecisionCommands(
             threadId,
             input: buildPromptInputs({ message: text }),
             mode: "auto",
+            senderThreadId: resolveSenderThreadId(threadId),
           });
           if (outputJson(opts, { threadId, ...result })) return;
           console.log(`Thread ${threadId} decision answer ${result.delivery}`);

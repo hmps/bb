@@ -155,7 +155,7 @@ describe("bb thread decisions", () => {
     },
   );
 
-  it("sends picks in decision order and free text through the normal user message route", async () => {
+  it("sends ordered picks and free text with the agent sender through the normal message route", async () => {
     vi.stubEnv("BB_THREAD_ID", "thr_agent");
     const send = vi.fn(async () => ({ ok: true, delivery: "sent" }));
     stubServerApi({
@@ -191,11 +191,40 @@ describe("bb thread decisions", () => {
           },
         ],
         mode: "auto",
+        senderThreadId: "thr_agent",
       },
     });
     expect(collectLogLines(vi.mocked(console.log))).toEqual([
       "Thread thr_1 decision answer sent",
     ]);
+  });
+
+  it("sends user answers without agent attribution outside a thread", async () => {
+    vi.stubEnv("BB_THREAD_ID", "");
+    const send = vi.fn(async () => ({ ok: true, delivery: "sent" }));
+    stubServerApi({
+      "v1.threads.:id.decisions.$get": async () => [makeDecisionSet()],
+      "v1.threads.:id.send.$post": send,
+    });
+    await runCommand(
+      [
+        "thread",
+        "decisions",
+        "answer",
+        "tds_1",
+        "thr_1",
+        "--text",
+        "Use SQLite.",
+      ],
+      register,
+    );
+    expect(send).toHaveBeenCalledWith({
+      param: { id: "thr_1" },
+      json: {
+        input: [{ type: "text", text: "Use SQLite.", mentions: [] }],
+        mode: "auto",
+      },
+    });
   });
 
   it.each([
