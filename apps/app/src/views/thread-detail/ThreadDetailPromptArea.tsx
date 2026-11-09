@@ -2233,7 +2233,7 @@ export function ThreadDetailPromptArea({
             threadId={thread.id}
           />
         ) : null}
-        {shouldHideComposer ? null : (
+        {shouldHideComposer || !answersDecisions ? null : (
           <DecisionCard
             threadId={thread.id}
             answers={decisionAnswers}
@@ -2322,6 +2322,7 @@ export function ThreadDetailPromptArea({
       submitMode.kind,
       thread.archivedAt,
       thread.id,
+      answersDecisions,
       decisionAnswers,
       focusBottomPluginComposer,
     ],
