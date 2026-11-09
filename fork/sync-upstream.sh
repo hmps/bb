@@ -31,6 +31,14 @@ theirs_tags="$(git show "${upstream_ref}:${journal}" | journal_tags)"
 fork_only="$(comm -23 <(cut -f2 <<<"$ours_tags" | sort) <(cut -f2 <<<"$theirs_tags" | sort))"
 upstream_new="$(comm -13 <(cut -f2 <<<"$ours_tags" | sort) <(cut -f2 <<<"$theirs_tags" | sort))"
 
+if [[ -n "$fork_only" && -n "$upstream_new" ]]; then
+  fork_count="$(wc -l <<<"$fork_only" | tr -d '[:space:]')"
+  if (( fork_count > 1 )); then
+    echo "error: more than one fork migration needs regeneration; regenerate each separately to preserve its SQL hash" >&2
+    exit 1
+  fi
+fi
+
 echo "Merging ${upstream_ref} ($(git rev-parse --short "$upstream_ref")) into $(git rev-parse --abbrev-ref HEAD)"
 merge_status=0
 git merge --no-ff --no-commit "$upstream_ref" || merge_status=$?
@@ -64,7 +72,7 @@ if [[ -n "$fork_only" && -n "$upstream_new" ]]; then
     fi
   done <<<"$ours_tags"
 
-  pnpm --filter @bb/db exec drizzle-kit generate
+  pnpm --filter @bb/db exec drizzle-kit generate --name "${fork_only#*_}"
   git add -A "$drizzle_dir"
 
   new_tags="$(comm -13 <(cut -f2 <<<"$theirs_tags" | sort) <(git show ":${journal}" | journal_tags | cut -f2 | sort))"

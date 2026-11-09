@@ -8,12 +8,17 @@ evidence: merge 58a4e42406 and script commit 43624b9cfd on hmps/bb main; fork/sy
 action: This repository is the hmps/bb fork of get-bb/bb; merge upstream only with fork/sync-upstream.sh and follow fork/README.md.
 verify: `git remote -v` shows upstream = get-bb/bb and origin = hmps/bb, and fork/sync-upstream.sh exists.
 retire-when: the fork is deleted or its changes are accepted upstream.
-safeguard: fork/sync-upstream.sh (moves fork Drizzle migrations after upstream's and checks the SQL); `gh repo set-default hmps/bb` in the local clone; fork Actions workflows disabled except PR Gate.
-proof: the script run on 7415efa32f reproduced the manual merge tree; without the move, upstream migrations 0153 and 0154 had older `when` values than the fork's 0153 and Drizzle would skip them.
+safeguard: fork/sync-upstream.sh preserves one fork migration's name and compares its SQL; packages/db/src/fork-migration-order.ts repairs eligible history before Drizzle runs.
+proof: packages/db/test/fork-migration-order.test.ts covers skipped upstream SQL, fork row relocation, ambiguous hashes, upstream history holes, prerequisite order, and transaction rollback.
 
 ## Details
 
-- Upstream migrations that are older than a fork migration never run on a fork database. bb then stops at startup with "Database migration history is incomplete". The script regenerates fork migrations last.
+- Drizzle skips upstream migrations whose timestamps precede the latest applied fork migration. The script regenerates the fork migration last.
+- Create new fork migrations with `drizzle-kit generate --name fork_<x>`. Tags must match `NNNN_fork_<x>` so the repair can identify them.
+- The script uses the old tag suffix when it generates the replacement. It stops if more than one fork migration needs regeneration. Regenerate each separately to preserve its SQL hash.
+- Before Drizzle runs, bb moves a uniquely identified fork ledger row from an obsolete timestamp to its current journal timestamp. The SQL hash must match exactly.
+- bb applies skipped upstream entries only when every later ledger row identifies a fork migration. Each entry and its ledger insert share one transaction.
+- Existing cleanup paths retain their excluded entries. Other history holes and ambiguous fork hashes remain errors. A database reset is not part of this repair.
 - Always merge an upstream sync. Never rebase or squash it, or the next merge repeats old conflicts.
 - Fork feature PRs go to hmps/bb (`-R hmps/bb` if gh has no default). get-bb/bb auto-closes PRs from authors that are not on its allow list.
 - Fork CI cannot run (no Blacksmith runners, no secrets). Run the local checks in fork/README.md as merge evidence.

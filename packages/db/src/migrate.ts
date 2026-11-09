@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { DbConnection } from "./connection.js";
+import { repairForkMigrationOrder } from "./fork-migration-order.js";
 import {
   compatibleMigrationHashes,
   publishedMigrationWhensByTag,
@@ -1454,6 +1455,10 @@ export function migrate(db: DbConnection, options: MigrateOptions = {}): void {
     const stagedThreadStorageDeletedAt =
       stageExistingThreadStorageDeletedAtColumn(db, migrationsFolder);
     try {
+      repairForkMigrationOrder(db, migrationsFolder, [
+        ...reorderedCleanupMigrationTags,
+        ...deferredDestructiveCleanupMigrationTags,
+      ]);
       drizzleMigrate(db, { migrationsFolder });
     } finally {
       if (stagedConnectMachineId) restoreStagedConnectMachineIdColumn(db);
