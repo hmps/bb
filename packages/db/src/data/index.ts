@@ -1,3 +1,5 @@
+export * from "./thread-decisions.js";
+
 export {
   createProject,
   ensurePersonalProject,

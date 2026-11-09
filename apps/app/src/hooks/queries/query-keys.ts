@@ -1189,3 +1189,11 @@ export function systemProviderCatalogQueryKey() {
 export function pluginUpdateJobsQueryKey() {
   return ["plugin-update-jobs"] as const;
 }
+
+export function threadDecisionsQueryKey(threadId: string) {
+  return ["threadDecisions", threadId] as const;
+}
+
+export function allThreadDecisionsQueryKeyPrefix() {
+  return ["threadDecisions"] as const;
+}

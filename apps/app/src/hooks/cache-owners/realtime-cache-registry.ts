@@ -20,6 +20,7 @@ import {
   getFetchingThreadListQueryKeys,
   isArchivedThreadListQueryKey,
   updateCachedThreadListPendingInteractionState,
+  updateCachedThreadDecisionsState,
   updateCachedThreadListStatusState,
   updateCachedThreadStatusState,
 } from "./query-cache";
@@ -59,6 +60,8 @@ import {
   uiPreferencesQueryKey,
   allSystemProvidersQueryKeyPrefix,
   threadDefaultExecutionOptionsQueryKey,
+  threadDecisionsQueryKey,
+  allThreadDecisionsQueryKeyPrefix,
   threadQueryKey,
   threadTabsQueryKey,
   threadSearchQueryKeyPrefix,
@@ -378,6 +381,18 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
     flush: "debounced",
     dirty: [getThreadCompactedHistoryInvalidationQueryKeys],
   },
+  "decisions-changed": {
+    flush: "immediate",
+    patch: [patchThreadDecisionsState],
+    dirty: [
+      dirtyThreadSearchQueries,
+      ({ threadId }) => [
+        threadId
+          ? threadDecisionsQueryKey(threadId)
+          : allThreadDecisionsQueryKeyPrefix(),
+      ],
+    ],
+  },
   "interactions-changed": {
     flush: "debounced",
     patch: [patchThreadListPendingInteractionState],
@@ -591,6 +606,7 @@ interface ThreadRealtimeDirtyContext extends RealtimeDirtyContext {
   timelineSequence: number | undefined;
   flushOnce: (key: string) => boolean;
   hasPendingInteraction: boolean | undefined;
+  hasOpenDecisions?: boolean;
   projectId: string | undefined;
   statusChange: ThreadStatusChangeMetadata | undefined;
   threadId: string | undefined;
@@ -632,6 +648,7 @@ interface ExecuteRealtimeDirtyHandlersArgs<
 
 interface ThreadRealtimePatchContext {
   hasPendingInteraction: boolean | undefined;
+  hasOpenDecisions?: boolean;
   queryClient: QueryClient;
   statusChange: ThreadStatusChangeMetadata | undefined;
   threadId: string;
@@ -973,6 +990,15 @@ function markThreadDetailQueryStale({
     queryKey: threadQueryKey(threadId),
     refetchType: "none",
   });
+}
+
+function patchThreadDecisionsState({
+  hasOpenDecisions,
+  queryClient,
+  threadId,
+}: ThreadRealtimePatchContext): void {
+  if (hasOpenDecisions === undefined) return;
+  updateCachedThreadDecisionsState(queryClient, threadId, hasOpenDecisions);
 }
 
 function patchThreadListPendingInteractionState({

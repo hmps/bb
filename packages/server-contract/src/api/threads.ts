@@ -563,6 +563,7 @@ export const threadSearchResponseSchema = z
 export type ThreadSearchResponse = z.infer<typeof threadSearchResponseSchema>;
 
 export const threadResponseSchema = threadWithRuntimeSchema.extend({
+  hasOpenDecisions: z.boolean(),
   activeBackgroundAgentCount: z.number().int().nonnegative(),
   /**
    * Whether `POST /threads/:id/restore-environment` would build this thread a
@@ -746,6 +747,11 @@ export const threadWithIncludesResponseSchema = threadResponseSchema.extend({
 export type ThreadWithIncludesResponse = z.infer<
   typeof threadWithIncludesResponseSchema
 >;
+
+export const threadDecisionsQuerySchema = z.object({
+  openOnly: z.enum(["true", "false"]).optional(),
+});
+export type ThreadDecisionsQuery = z.infer<typeof threadDecisionsQuerySchema>;
 
 export const threadPendingInteractionsResponseSchema = z.array(
   pendingInteractionSchema,

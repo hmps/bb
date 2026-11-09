@@ -1,3 +1,5 @@
+import { resolveOpenDecisionsForUserMessage } from "./thread-decisions.js";
+import { resolveDispatchAuthor } from "./dispatch-author.js";
 import {
   isAppUpdateSendHoldSet,
   claimNextQueuedThreadMessageGroup,
@@ -244,6 +246,19 @@ export async function createQueuedMessageForThread(
           systemNotice: null,
           deliveryMode: "queue",
         });
+        const author = resolveDispatchAuthor({
+          retrying: false,
+          systemNotice: false,
+          senderThreadId,
+          startedOnBehalfOf: null,
+        });
+        if (author.initiator === "user") {
+          resolveOpenDecisionsForUserMessage(
+            tx,
+            { threadId: thread.id, requestRef: queuedMessage.id, input },
+            deps.hub,
+          );
+        }
         return { currentThread, hasProviderSession, queuedMessage };
       },
       { behavior: "immediate" },

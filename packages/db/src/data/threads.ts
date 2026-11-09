@@ -1,3 +1,4 @@
+import { threadHasOpenDecisionsSql } from "./thread-decisions.js";
 import { prepareCachedQuery } from "../connection.js";
 import { markThreadPruningPolicyWork } from "./thread-pruning-work.js";
 import { copyProjectAttachmentOwnership } from "./project-attachments.js";
@@ -593,6 +594,7 @@ function threadWithPendingInteractionBaseQuery(db: DbConnection) {
       environmentName: environments.name,
       environmentPath: environments.path,
       environmentProviderId: environments.environmentProviderId,
+      hasOpenDecisions: threadHasOpenDecisionsSql(),
       hasPendingInteraction: sql<number>`EXISTS (SELECT 1 FROM ${pendingInteractions} WHERE ${pendingInteractions.threadId} = ${threads.id} AND ${pendingInteractions.status} = 'pending')`,
     })
     .from(threads)
@@ -635,6 +637,7 @@ export interface ThreadWithPendingInteractionState extends ThreadRow {
   environmentPath: string | null;
   environmentProviderId: string | null;
   hasPendingInteraction: boolean;
+  hasOpenDecisions: boolean;
 }
 
 interface ThreadWithPendingInteractionStateRow extends ThreadRow {
@@ -645,6 +648,7 @@ interface ThreadWithPendingInteractionStateRow extends ThreadRow {
   environmentPath: string | null;
   environmentProviderId: string | null;
   hasPendingInteraction: number;
+  hasOpenDecisions: number;
 }
 
 export interface ListLiveThreadsInEnvironmentArgs {
@@ -782,6 +786,7 @@ function toThreadWithPendingInteractionState(
     environmentPath,
     environmentProviderId,
     hasPendingInteraction,
+    hasOpenDecisions,
     ...thread
   } = row;
   return {
@@ -793,6 +798,7 @@ function toThreadWithPendingInteractionState(
     environmentPath,
     environmentProviderId,
     hasPendingInteraction: hasPendingInteraction > 0,
+    hasOpenDecisions: hasOpenDecisions > 0,
   };
 }
 
@@ -1897,6 +1903,7 @@ export function updateThread(
   if (updated && changes.length > 0) {
     notifier.notifyThread(id, changes, {
       projectId: existing.projectId,
+      ...(changes.includes("parent-changed") ? { previousParentThreadId: existing.parentThreadId } : {}),
     });
   }
   return updated ?? null;
@@ -2001,6 +2008,7 @@ export function deleteThread(
     return false;
   db.delete(threads).where(eq(threads.id, id)).run();
   notifier.notifyThread(id, ["thread-deleted"], {
+    previousParentThreadId: existing.parentThreadId,
     projectId: existing.projectId,
   });
   notifier.notifyProject(existing.projectId, ["threads-changed"]);
@@ -2172,6 +2180,7 @@ export function markThreadDeleted(
     .all();
   for (const thread of updated) {
     notifier.notifyThread(thread.id, ["thread-deleted"], {
+      previousParentThreadId: thread.parentThreadId,
       projectId: thread.projectId,
     });
     notifier.notifyProject(thread.projectId, ["threads-changed"]);

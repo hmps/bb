@@ -186,6 +186,7 @@ export function makeThreadListEntry(
       activeGoalCount: 0,
     },
     hasPendingInteraction: false,
+    hasOpenDecisions: false,
     environmentHostId: null,
     environmentName: null,
     environmentBranchName: null,

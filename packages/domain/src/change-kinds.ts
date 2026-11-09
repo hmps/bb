@@ -18,6 +18,7 @@ export const THREAD_CHANGE_KINDS = [
   "history-rewritten",
   "history-compacted",
   "interactions-changed",
+  "decisions-changed",
   "status-changed",
   "title-changed",
   "queue-changed",
@@ -302,6 +303,8 @@ export const threadChangeMetadataSchema = z
     eventTypes: z.array(threadEventTypeSchema).readonly().optional(),
     timelineSequence: z.number().int().nonnegative().optional(),
     hasPendingInteraction: z.boolean().optional(),
+    hasOpenDecisions: z.boolean().optional(),
+    previousParentThreadId: z.string().nullable().optional(),
     projectId: z.string().optional(),
     statusChange: threadStatusChangeMetadataSchema.optional(),
   })
@@ -402,6 +405,8 @@ const threadChangeMetadataLenientSchema = z.object({
     )
     .optional(),
   hasPendingInteraction: z.boolean().optional(),
+  hasOpenDecisions: z.boolean().optional(),
+  previousParentThreadId: z.string().nullable().optional(),
   projectId: z.string().optional(),
   statusChange: threadStatusChangeMetadataSchema.optional().catch(undefined),
 });

@@ -2375,3 +2375,46 @@ describe("@bb/sdk", () => {
     ]);
   });
 });
+
+describe("experimental thread decisions", () => {
+  it("uses the shared list and dismiss routes with open and history filters", async () => {
+    const queue = createFetchQueue([
+      { body: [] },
+      { body: [] },
+      { body: { id: "dset_1", status: "dismissed" } },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "https://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+    await sdk.threads.experimental_decisions.list({ threadId: "thr_1" });
+    await sdk.threads.experimental_decisions.list({
+      threadId: "thr_1",
+      openOnly: false,
+    });
+    await sdk.threads.experimental_decisions.dismiss({
+      threadId: "thr_1",
+      decisionSetId: "dset_1",
+    });
+    expect(queue.requests).toEqual([
+      {
+        method: "GET",
+        url: "https://bb.test/api/v1/threads/thr_1/decisions?openOnly=true",
+        bodyText: undefined,
+      },
+      {
+        method: "GET",
+        url: "https://bb.test/api/v1/threads/thr_1/decisions?openOnly=false",
+        bodyText: undefined,
+      },
+      {
+        method: "POST",
+        url: "https://bb.test/api/v1/threads/thr_1/decisions/dset_1/dismiss",
+        bodyText: undefined,
+      },
+    ]);
+  });
+});

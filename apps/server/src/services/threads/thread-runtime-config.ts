@@ -2,7 +2,7 @@ import {
   resolveHostEnvironment,
   mergeHostAndProviderEnvironment,
 } from "../hosts/host-environment.js";
-import { getEnvironment, getHost, getProject } from "@bb/db";
+import { getEnvironment, getExperiments, getHost, getProject } from "@bb/db";
 import { PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS } from "@get-bb/plugin-sdk/internal/host-policy";
 import type {
   DynamicTool,
@@ -29,6 +29,7 @@ import {
 } from "../plugins/plugin-agent-contributions.js";
 import { resolveSkillCatalog } from "../skills/skill-catalog.js";
 import { discoverPluginSkillIds } from "../skills/injected-skills.js";
+import { REQUEST_DECISIONS_TOOL } from "./thread-decisions.js";
 import { UPDATE_ENVIRONMENT_DIRECTORY_TOOL } from "./thread-environment-directory.js";
 import {
   DATA_DIR_AGENT_INSTRUCTIONS_RELATIVE_PATH,
@@ -89,6 +90,7 @@ interface DynamicToolContribution {
 
 function resolveDynamicTools(
   pluginTools: ReturnType<typeof listPluginAgentTools>,
+  decisionCards: boolean,
 ): DynamicToolContribution[] {
   return [
     {
@@ -96,6 +98,9 @@ function resolveDynamicTools(
       instructions: UPDATE_ENVIRONMENT_DIRECTORY_INSTRUCTIONS,
       pluginId: null,
     },
+    ...(decisionCards
+      ? [{ tool: REQUEST_DECISIONS_TOOL, instructions: null, pluginId: null }]
+      : []),
     ...pluginTools.map((contribution) => ({
       tool: contribution.tool,
       instructions: contribution.instructions,
@@ -213,6 +218,7 @@ export async function resolveThreadRuntimeCommandConfig(
   );
   const dynamicToolContributions = resolveDynamicTools(
     conditionalConfiguration.tools,
+    getExperiments(deps.db).decisionCards,
   );
   const dynamicTools = dynamicToolContributions.map(
     (contribution) => contribution.tool,

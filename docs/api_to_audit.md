@@ -4435,3 +4435,13 @@ precedence, bounded discovery failure, and module-ABI preservation after Node
 replacement. Settle the shared process-local instance lifecycle across SDK
 bundle versions and whether `bundledNpmCli` belongs on the public surface before
 removing the prefix.
+
+## ThreadsArea.experimental_decisions
+
+`list({ threadId, openOnly?, signal? })` returns open decision sets by default.
+Set `openOnly: false` to include history.
+`dismiss({ threadId, decisionSetId })` dismisses an open set.
+Answers use the normal thread message route.
+The thread composer, CLI decisions commands, and push notifications use these routes.
+Stabilize after the card, CLI, and notification paths pass integrated lifecycle checks.
+Audit validation, history limits, and resolution references before removing the prefix.

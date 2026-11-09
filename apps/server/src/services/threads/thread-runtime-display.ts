@@ -1,3 +1,4 @@
+import { hasOpenThreadDecisions } from "@bb/db";
 import {
   getEnvironment,
   getSessionById,
@@ -339,6 +340,7 @@ export function toThreadResponseFromThread(
   });
   return {
     ...threadWithRuntime,
+    hasOpenDecisions: hasOpenThreadDecisions(deps.db, args.thread.id),
     activeBackgroundAgentCount:
       listActiveBackgroundTaskCountsByThreadIds(deps.db, {
         threadIds: [args.thread.id],
@@ -615,6 +617,7 @@ function toThreadListEntryResponseFromLatestSession(
       isWorktree: args.thread.environmentIsWorktree,
     }),
     hasPendingInteraction: args.thread.hasPendingInteraction,
+    hasOpenDecisions: args.thread.hasOpenDecisions,
     runtime: resolveThreadRuntimeStateFromLatestSession({
       environmentHostId: args.thread.environmentHostId,
       hostConnected: args.hostConnected,

@@ -54,6 +54,10 @@ export function createQueuedThreadMessageClaimToken(): string {
   return createId("qclaim");
 }
 
+export function createThreadDecisionId(): string {
+  return createId("dset");
+}
+
 export function createPendingInteractionId(): string {
   return createId("pint");
 }

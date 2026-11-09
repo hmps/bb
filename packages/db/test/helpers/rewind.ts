@@ -9,7 +9,12 @@ export function dropPluginEnabledFollowsDefaultColumn(db: DbConnection): void {
   }
 }
 
+export function dropThreadDecisionsTable(db: DbConnection): void {
+  db.$client.exec("DROP TABLE IF EXISTS thread_decisions");
+}
+
 export function rewindThreadPruningWork(db: DbConnection): void {
+  dropThreadDecisionsTable(db);
   db.$client.exec(`
     DROP TABLE IF EXISTS thread_pruning_work;
     DELETE FROM __drizzle_migrations WHERE created_at >= 1791399370294;
@@ -76,6 +81,7 @@ interface QueuedTableColumn {
 }
 
 export function rewindQueuedMessageStateMigration(db: DbConnection): void {
+  dropThreadDecisionsTable(db);
   const columns = db.$client
     .prepare<[], QueuedTableColumn>("PRAGMA table_info(queued_thread_messages)")
     .all();

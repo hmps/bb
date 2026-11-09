@@ -11,6 +11,7 @@ import {
   dropThreadParentNotificationsColumn,
   dropQueuedMessageDeliveryColumns,
   dropThreadStatusChangedAtColumn,
+  dropThreadDecisionsTable,
   restoreDiffViewedFilesTable,
   dropQueuedMessageEditHeldUntilColumn,
   rewindQueuedMessageStateMigration,
@@ -2622,6 +2623,7 @@ describe("migrate", () => {
       });
       dropThreadStatusChangedAtColumn(db);
       restoreDiffViewedFilesTable(db);
+      dropThreadDecisionsTable(db);
       db.$client
         .prepare<[number, string]>(
           "UPDATE threads SET updated_at = ? WHERE id = ?",

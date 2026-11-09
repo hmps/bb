@@ -159,6 +159,7 @@ export const threadListEntrySchema = threadWithRuntimeSchema.extend({
   queuedWork: threadQueuedWorkSchema,
   pinSortKey: z.string().nullable(),
   hasPendingInteraction: z.boolean(),
+  hasOpenDecisions: z.boolean(),
   environmentHostId: z.string().nullable(),
   environmentName: z.string().nullable(),
   environmentBranchName: z.string().nullable(),

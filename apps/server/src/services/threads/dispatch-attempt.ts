@@ -1,3 +1,4 @@
+import { resolveOpenDecisionsForUserMessage } from "./thread-decisions.js";
 import {
   requestQueuedMachineReadiness,
   requestQueuedMessageDispatch,
@@ -13,6 +14,7 @@ import {
   hasLiveQueuedRetry,
   isAppUpdateSendHoldSet,
   type EnvironmentRow,
+  type DbTransaction,
   getThread,
   isThreadQueueAutoSendPaused,
   listRunningThreads,
@@ -462,9 +464,7 @@ async function runDispatchAttempt(
     deliveryMode: run.deliveryMode,
   };
 
-  const retriesGoFirst = getExperiments(
-    deps.db,
-  ).resumeThreadsAfterRestart;
+  const retriesGoFirst = getExperiments(deps.db).resumeThreadsAfterRestart;
   const waitOn = (
     waitingOn: QueuedMessageWaitingOn,
     sendAt: number | null,
@@ -730,13 +730,7 @@ async function runDispatchAttempt(
       // for a thread that is gone. Reporting a dispatch here would tell the
       // caller their message went when it went nowhere.
       const current = getThread(deps.db, thread.id);
-      return reattemptDispatchForThreadChange(
-        deps,
-        args,
-        current,
-        run,
-        waitOn,
-      );
+      return reattemptDispatchForThreadChange(deps, args, current, run, waitOn);
     }
     await launchAdmittedThread(deps, admission);
     return { kind: "dispatched" };
@@ -753,9 +747,24 @@ async function runDispatchAttempt(
       trigger: args.trigger,
       ...(systemNotice !== null ? { systemNotice } : {}),
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
-      beforeAppendInTransaction: ({ tx }) => {
+      beforeAppendInTransaction: ({ tx, requestId }) => {
         if (getThread(tx, thread.id)?.status !== thread.status) {
           throw new DispatchThreadStatusChangedError();
+        }
+        if (
+          claimed === null &&
+          author.initiator === "user" &&
+          requestId !== null
+        ) {
+          resolveOpenDecisionsForUserMessage(
+            tx,
+            {
+              threadId: thread.id,
+              requestRef: requestId,
+              input: payload.input,
+            },
+            deps.hub,
+          );
         }
         if (claimed !== null) {
           consumeClaimedRows(
@@ -833,7 +842,7 @@ function consumeClaimedRows(
   claimed: readonly ClaimedQueuedThreadMessageRow[],
   threadId: string,
   respectManualStopPause: boolean,
-): SendThreadMessageTransactionPreflight {
+): (args: { tx: DbTransaction }) => void {
   return ({ tx }) => {
     if (respectManualStopPause && isThreadQueueAutoSendPaused(tx, threadId)) {
       throw createQueuedMessageAutoSendPausedError();

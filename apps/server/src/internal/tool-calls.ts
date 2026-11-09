@@ -18,6 +18,10 @@ import {
   handleUpdateEnvironmentDirectoryToolCall,
   UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME,
 } from "../services/threads/thread-environment-directory.js";
+import {
+  handleRequestDecisionsToolCall,
+  REQUEST_DECISIONS_TOOL_NAME,
+} from "../services/threads/thread-decisions.js";
 import { requireAuthenticatedDaemonSession } from "./session-state.js";
 
 const textEncoder = new TextEncoder();
@@ -82,6 +86,17 @@ export function registerInternalToolCallRoutes(app: Hono, deps: AppDeps): void {
             input: payload.arguments,
             thread,
             turnId: payload.turnId,
+          }),
+        );
+      }
+
+      if (payload.tool === REQUEST_DECISIONS_TOOL_NAME) {
+        return context.json(
+          handleRequestDecisionsToolCall(deps, {
+            input: payload.arguments,
+            threadId: thread.id,
+            turnId: payload.turnId,
+            toolCallId: payload.callId,
           }),
         );
       }

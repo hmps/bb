@@ -542,6 +542,14 @@ export function removeOptimisticTimelineRow(
   });
 }
 
+export function updateCachedThreadDecisionsState(
+  queryClient: QueryClient,
+  threadId: string,
+  hasOpenDecisions: boolean,
+): void {
+  patchThreadEntity(queryClient, threadId, { hasOpenDecisions });
+}
+
 export function updateCachedThreadListPendingInteractionState(
   queryClient: QueryClient,
   threadId: string,

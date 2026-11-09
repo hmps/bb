@@ -136,6 +136,7 @@ function mergeThreadChangeMetadata({
     next.backgroundActivityChanged ?? current?.backgroundActivityChanged;
   const hasPendingInteraction =
     next.hasPendingInteraction ?? current?.hasPendingInteraction;
+  const hasOpenDecisions = next.hasOpenDecisions ?? current?.hasOpenDecisions;
   const projectId = next.projectId ?? current?.projectId;
   const statusChange = statusChanged
     ? next.statusChange
@@ -156,6 +157,8 @@ function mergeThreadChangeMetadata({
   if (hasPendingInteraction !== undefined) {
     metadata.hasPendingInteraction = hasPendingInteraction;
   }
+  if (hasOpenDecisions !== undefined)
+    metadata.hasOpenDecisions = hasOpenDecisions;
   if (projectId !== undefined) {
     metadata.projectId = projectId;
   }
@@ -207,6 +210,7 @@ function flushThreadInvalidations(
         timelineSequence: undefined,
         flushOnce,
         hasPendingInteraction: undefined,
+        hasOpenDecisions: undefined,
         projectId: undefined,
         queryClient,
         statusChange: undefined,
@@ -226,6 +230,7 @@ function flushThreadInvalidations(
           timelineSequence: metadata?.timelineSequence,
           flushOnce,
           hasPendingInteraction: metadata?.hasPendingInteraction,
+          hasOpenDecisions: metadata?.hasOpenDecisions,
           projectId: metadata?.projectId,
           queryClient,
           statusChange: metadata?.statusChange,
@@ -268,6 +273,7 @@ function applyImmediateThreadChanges({
         timelineSequence: merged?.timelineSequence,
         flushOnce,
         hasPendingInteraction: merged?.hasPendingInteraction,
+        hasOpenDecisions: merged?.hasOpenDecisions,
         projectId: merged?.projectId,
         queryClient,
         statusChange: merged?.statusChange,
@@ -580,6 +586,7 @@ export function createRealtimeCacheEffects({
           if (message.id) {
             applyRealtimeThreadPatches(message.changes, {
               hasPendingInteraction: message.metadata?.hasPendingInteraction,
+              hasOpenDecisions: message.metadata?.hasOpenDecisions,
               queryClient,
               statusChange: message.metadata?.statusChange,
               threadId: message.id,
