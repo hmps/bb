@@ -25,7 +25,10 @@ export const promptAreaMocks = {
   createThreadMutateAsync: vi.fn(),
   decisionAnswers: null as ThreadDecisionAnswers | null,
   decisionSets: null as ThreadDecisionSet[] | null,
-  defaultExecutionOptions: null as ResolvedThreadExecutionOptions | null,
+  defaultExecutionOptions: null as
+    | ResolvedThreadExecutionOptions
+    | null
+    | undefined,
   executionInputSources: {} as ExistingThreadExecutionInputSources,
   deleteQueuedMessageMutateAsync: vi.fn(),
   navigate: vi.fn(),

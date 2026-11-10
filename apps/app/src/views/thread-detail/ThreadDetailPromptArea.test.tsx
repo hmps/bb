@@ -628,7 +628,7 @@ describe("ThreadDetailPromptArea", () => {
     expect(screen.getByTestId("decision-picks").textContent).toBe("0:1");
   });
 
-  it("sends the answer as soon as the last decision is picked", async () => {
+  function openOneDecisionSet() {
     testQueryClient.setQueryData(
       systemConfigQueryKey(),
       makeSystemConfig({
@@ -661,31 +661,128 @@ describe("ThreadDetailPromptArea", () => {
         resolvedAt: null,
       },
     ];
-    mocks.promptDraft.text = "Also update the guide.";
-    renderPromptArea({
-      thread: makeThread({ runtime: { displayStatus: "idle" } }),
-    });
+  }
 
+  const AUTO_SENT_DECISION_INPUT = [
+    {
+      type: "text",
+      text: "Decision 1 — Ship behind a flag?: Ship to all\nAlso update the guide.",
+      mentions: [],
+    },
+  ];
+
+  async function pickLastDecision() {
     await act(async () => {
       fireEvent.click(
         await screen.findByRole("button", { name: "Pick last option" }),
       );
     });
+  }
+
+  it("sends the answer as soon as the last decision is picked", async () => {
+    openOneDecisionSet();
+    mocks.promptDraft.text = "Also update the guide.";
+    renderPromptArea({
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    });
+
+    await pickLastDecision();
 
     await waitFor(() =>
       expect(mocks.sendMessageMutateAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           id: "thr_1",
-          input: [
-            {
-              type: "text",
-              text: "Decision 1 — Ship behind a flag?: Ship to all\nAlso update the guide.",
-              mentions: [],
-            },
-          ],
+          input: AUTO_SENT_DECISION_INPUT,
         }),
       ),
     );
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for model options before it sends the picked decisions", async () => {
+    openOneDecisionSet();
+    mocks.defaultExecutionOptions = undefined;
+    mocks.promptDraft.text = "Also update the guide.";
+    const options = {
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    };
+    const { rerender } = renderPromptArea(options);
+
+    await pickLastDecision();
+    expect(mocks.sendMessageMutateAsync).not.toHaveBeenCalled();
+
+    mocks.defaultExecutionOptions = {
+      model: "gpt-5",
+      permissionMode: "auto",
+      reasoningLevel: "medium",
+      serviceTier: "default",
+      source: "client/turn/requested",
+    };
+    rerender(buildPromptAreaElement(options));
+
+    await waitFor(() =>
+      expect(mocks.sendMessageMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ input: AUTO_SENT_DECISION_INPUT }),
+      ),
+    );
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a pending upload before it sends the picked decisions", async () => {
+    const upload = createDeferredPromise<{
+      mimeType: string;
+      name: string;
+      path: string;
+      sizeBytes: number;
+      type: "localFile";
+    }>();
+    const uploaded = {
+      mimeType: "text/plain",
+      name: "queued.txt",
+      path: "thread-storage/uploads/queued.txt",
+      sizeBytes: 6,
+      type: "localFile" as const,
+    };
+    mocks.uploadPromptAttachmentMutateAsync.mockReturnValueOnce(upload.promise);
+    openOneDecisionSet();
+    mocks.promptDraft.text = "Also update the guide.";
+    renderPromptArea({
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Attach file" }));
+
+    await pickLastDecision();
+    expect(mocks.sendMessageMutateAsync).not.toHaveBeenCalled();
+
+    await act(async () => {
+      upload.resolve(uploaded);
+    });
+
+    await waitFor(() =>
+      expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1),
+    );
+    expect(mocks.promptDraft.addAttachment).toHaveBeenCalledWith(uploaded);
+    expect(
+      mocks.promptDraft.addAttachment.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.sendMessageMutateAsync.mock.invocationCallOrder[0]!);
+  });
+
+  it("does not send a set again while its sent answer is still listed as open", async () => {
+    openOneDecisionSet();
+    mocks.promptDraft.text = "Also update the guide.";
+    renderPromptArea({
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    });
+
+    await pickLastDecision();
+    await waitFor(() =>
+      expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1),
+    );
+
+    await pickLastDecision();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
     expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1);
   });
 

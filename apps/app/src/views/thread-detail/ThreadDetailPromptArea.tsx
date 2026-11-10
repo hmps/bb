@@ -1343,8 +1343,15 @@ export function ThreadDetailPromptArea({
   const [autoSendDecisionSetId, setAutoSendDecisionSetId] = useState<
     string | null
   >(null);
+  const sentDecisionSetIdsRef = useRef(new Set<string>());
+  const canAutoSendDecisions =
+    !isAttachingBottomFiles &&
+    !isFollowUpSubmitting &&
+    !isDefaultExecutionOptionsLoading;
   const handleAllDecisionsPicked = useCallback(() => {
-    setAutoSendDecisionSetId(decisionAnswers.openSet?.id ?? null);
+    const setId = decisionAnswers.openSet?.id ?? null;
+    if (setId === null || sentDecisionSetIdsRef.current.has(setId)) return;
+    setAutoSendDecisionSetId(setId);
   }, [decisionAnswers.openSet?.id]);
   useEffect(() => {
     if (autoSendDecisionSetId === null) return;
@@ -1354,10 +1361,16 @@ export function ThreadDetailPromptArea({
       return;
     }
     if (decisionAnswers.picks.size < openSet.decisions.length) return;
+    if (!canAutoSendDecisions) return;
     setAutoSendDecisionSetId(null);
-    void handleSend().catch(() => {});
+    void handleSend()
+      .then(() => {
+        sentDecisionSetIdsRef.current.add(openSet.id);
+      })
+      .catch(() => {});
   }, [
     autoSendDecisionSetId,
+    canAutoSendDecisions,
     decisionAnswers.openSet,
     decisionAnswers.picks,
     handleSend,
