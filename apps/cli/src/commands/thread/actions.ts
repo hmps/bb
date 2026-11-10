@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { randomUUID } from "node:crypto";
 import {
+  canRestartThreadSession,
   threadVisibilitySchema,
   type PermissionMode,
   type ReasoningLevel,
@@ -702,6 +703,39 @@ export function registerActionsCommands(
         }),
       );
   }
+
+  parent
+    .command("restart-session [id]")
+    .description(
+      "End the agent session of an idle or errored thread; the conversation stays, and the next message starts a new session with the current tools and instructions",
+    )
+    .option("--self", "Target the current thread (from BB_THREAD_ID)")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string | undefined, opts: ThreadActionOptions) => {
+        const threadId = requireThreadIdOrSelf(id, opts);
+        const sdk = createCliBbSdk(getUrl());
+        const { status } = await sdk.threads.get({ threadId });
+        if (!canRestartThreadSession(status)) {
+          throw new CliExitError(
+            `Thread ${threadId} is ${status}; restart its session when it is idle or errored.`,
+            1,
+            {
+              code: "thread_not_idle",
+              hint:
+                status === "pending"
+                  ? "It has no session yet. Its first message starts one with the current tools and instructions."
+                  : `Wait for the turn to finish with \`bb thread wait ${threadId}\`, or stop it with \`bb thread stop ${threadId}\`.`,
+            },
+          );
+        }
+        await sdk.threads.stop({ threadId });
+        if (outputJson(opts, { ok: true, threadId })) return;
+        console.log(
+          `Thread ${threadId} session ended; its next message starts a new session`,
+        );
+      }),
+    );
 }
 
 async function postThreadMessage(

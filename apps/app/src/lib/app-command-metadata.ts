@@ -64,6 +64,11 @@ export const APP_COMMAND_GROUPS: readonly AppCommandGroup[] = [
         "Pin or unpin the focused thread.",
       ),
       command(
+        "thread.restartSession",
+        "Restart thread session",
+        "End the focused idle thread's agent session so its next message loads the current tools and instructions.",
+      ),
+      command(
         "thread.previous",
         "Previous thread",
         "Open the previous visible sidebar thread.",

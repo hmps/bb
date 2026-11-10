@@ -29,11 +29,16 @@ const sdkThreads = vi.hoisted(() => ({
   markUnread: vi.fn(),
   unarchive: vi.fn(),
   get: vi.fn(),
+  stop: vi.fn(),
 }));
 
 const testState = vi.hoisted(() => {
   const keybinding = (
-    command: "thread.archive" | "thread.markRead" | "thread.pin",
+    command:
+      | "thread.archive"
+      | "thread.markRead"
+      | "thread.pin"
+      | "thread.restartSession",
     key: string,
   ) => ({
     command,
@@ -53,6 +58,7 @@ const testState = vi.hoisted(() => {
       keybinding("thread.archive", "a"),
       keybinding("thread.markRead", "m"),
       keybinding("thread.pin", "p"),
+      keybinding("thread.restartSession", "r"),
     ],
   };
 });
@@ -155,7 +161,7 @@ function SplitHandlers({
   );
 }
 
-function pressShortcut(letter: "A" | "M" | "P") {
+function pressShortcut(letter: "A" | "M" | "P" | "R") {
   fireEvent.keyDown(window, {
     key: letter,
     code: `Key${letter}`,
@@ -184,6 +190,11 @@ const PANE_COMMANDS = [
     targets: () =>
       sdkThreads.markRead.mock.calls.map(([args]) => args.threadId),
   },
+  {
+    command: "thread.restartSession",
+    letter: "R",
+    targets: () => sdkThreads.stop.mock.calls.map(([args]) => args.threadId),
+  },
 ] as const;
 
 beforeEach(() => {
@@ -195,6 +206,7 @@ beforeEach(() => {
     ...makeThread(threadId, threadId),
     lastReadAt: 9,
   }));
+  sdkThreads.stop.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -246,4 +258,22 @@ describe("pane thread action command handler", () => {
 
     expect(mocks.requestArchiveThreads).not.toHaveBeenCalled();
   });
+
+  it.each(["pending", "starting", "active", "stopping"] as const)(
+    "does not restart the session of a focused thread that is %s",
+    async (status) => {
+      const busyThread = { ...firstThread, status };
+      render(
+        <SplitHandlers
+          firstPaneThread={busyThread}
+          focusedThreadId={busyThread.id}
+        />,
+      );
+
+      pressShortcut("R");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(sdkThreads.stop).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -469,6 +469,81 @@ describe("bb thread action command output", () => {
     },
   );
 
+  function stubThreadStatus(threadId: string, status: domain.ThreadStatus) {
+    return vi.fn(async () =>
+      fixtures.makeThread({
+        id: threadId,
+        projectId: "proj-1",
+        providerId: "codex",
+        status,
+      }),
+    );
+  }
+
+  it.each(["idle", "error"] as const)(
+    "bb thread restart-session stops a thread that is %s",
+    async (status) => {
+      const stopPost = vi.fn(async () => ({ ok: true }));
+      stubServerApi({
+        "v1.threads.:id.$get": stubThreadStatus("thread-restart", status),
+        "v1.threads.:id.stop.$post": stopPost,
+      });
+
+      await runCommand(
+        ["thread", "restart-session", "thread-restart"],
+        register,
+      );
+
+      expect(stopPost).toHaveBeenCalledWith({
+        param: { id: "thread-restart" },
+      });
+      expect(collectLogLines(vi.mocked(console.log))).toContain(
+        "Thread thread-restart session ended; its next message starts a new session",
+      );
+    },
+  );
+
+  it("bb thread restart-session --self --json resolves from BB_THREAD_ID", async () => {
+    vi.stubEnv("BB_THREAD_ID", "thread-restart-self");
+    const stopPost = vi.fn(async () => ({ ok: true }));
+    stubServerApi({
+      "v1.threads.:id.$get": stubThreadStatus("thread-restart-self", "idle"),
+      "v1.threads.:id.stop.$post": stopPost,
+    });
+
+    await runCommand(
+      ["thread", "restart-session", "--self", "--json"],
+      register,
+    );
+
+    expect(stopPost).toHaveBeenCalledWith({
+      param: { id: "thread-restart-self" },
+    });
+    expect(
+      JSON.parse(collectLogLines(vi.mocked(console.log)).join("\n")),
+    ).toEqual({ ok: true, threadId: "thread-restart-self" });
+  });
+
+  it.each(["pending", "starting", "active", "stopping"] as const)(
+    "bb thread restart-session refuses a thread that is %s without stopping it",
+    async (status) => {
+      const stopPost = vi.fn(async () => ({ ok: true }));
+      stubServerApi({
+        "v1.threads.:id.$get": stubThreadStatus("thread-busy", status),
+        "v1.threads.:id.stop.$post": stopPost,
+      });
+
+      await expect(
+        runCommand(["thread", "restart-session", "thread-busy"], register),
+      ).rejects.toThrow("process.exit:1");
+
+      expect(stopPost).not.toHaveBeenCalled();
+      expect(collectLogLines(vi.mocked(console.error)).join("\n")).toContain(
+        `Thread thread-busy is ${status}; restart its session when it is idle or errored.`,
+      );
+    },
+  );
+
   it("bb thread retry defaults the turn and the reason at the boundary", async () => {
     const retryPost = vi.fn(async () => ({
       ok: true,

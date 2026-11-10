@@ -63,6 +63,7 @@ const sdkThreads = vi.hoisted(() => ({
   unarchive: vi.fn(),
   update: vi.fn(),
   get: vi.fn(),
+  stop: vi.fn(),
   experimental_regenerateTitle: vi.fn(),
 }));
 const copyToClipboardWithToast = vi.hoisted(() => vi.fn(async () => true));
@@ -390,6 +391,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -408,6 +410,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -441,6 +444,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "Unpin",
         "Mark read",
         "Notify parent, Auto",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -458,6 +462,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "Unpin",
         "Mark read",
         "Notify parent, Auto",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -483,6 +488,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -501,6 +507,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -525,6 +532,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -543,6 +551,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -569,6 +578,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -587,6 +597,7 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "---",
         "Pin",
         "Mark unread",
+        "Restart session",
         "---",
         "Rename",
         "Regenerate title",
@@ -672,6 +683,16 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
     );
 
     await surface.open();
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Restart session" }),
+    );
+    await waitFor(() =>
+      expect(sdkThreads.stop).toHaveBeenCalledWith({
+        threadId: baseThread.id,
+      }),
+    );
+
+    await surface.open();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     expect(requestRename).toHaveBeenCalledWith(baseThread.id);
     expect(defaultRequestRename).not.toHaveBeenCalled();
@@ -718,6 +739,23 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
       },
     );
   });
+
+  it.each(["pending", "starting", "active", "stopping"] as const)(
+    "offers no Restart session while the thread is %s",
+    async (status) => {
+      renderSurface(surface, {
+        thread: makeThreadListEntry({ ...baseThread, status }),
+      });
+      await surface.open();
+      const menu = await openMenu();
+      expect(
+        within(menu).getByRole("menuitem", { name: "Pin" }),
+      ).not.toBeNull();
+      expect(
+        within(menu).queryByRole("menuitem", { name: "Restart session" }),
+      ).toBeNull();
+    },
+  );
 
   it("falls back to bb's rename dialog when the surface has no editor", async () => {
     renderSurface(surface, { thread: baseThread });
@@ -865,6 +903,7 @@ describe("thread action registrations", () => {
       "bb--core/pin",
       "bb--core/read",
       "bb--core/parentNotifications",
+      "bb--core/restartSession",
       "bb--core/rename",
       "bb--core/regenerateTitle",
       "fixture/move",
