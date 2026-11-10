@@ -31,6 +31,14 @@ Always merge. Do not rebase or squash an upstream sync. The merge commit records
 - A fork migration must only contain `CREATE TABLE` and `CREATE INDEX` statements for fork-owned tables. Do not alter upstream tables. Upstream migrations rebuild their tables and copy only the columns that upstream knows, so a fork column on an upstream table loses its data.
 - The script supports one fork migration. drizzle-kit puts all fork schema changes into one generated migration, so the script cannot regenerate two migrations separately. Extend the script before you add a second fork migration.
 
+## Deploy the fork
+
+Ethereal-Titan runs bb from its source checkout, so `bb updates app` uses source mode. Source mode pulls `origin/main` (this fork), installs, builds, and restarts bb. It never installs the npm release.
+
+- Run `bb updates app apply --when-idle` to deploy merged fork changes. bb updates once no thread runs. This needs the `updateWhenIdle` experiment.
+- Use `bb updates app apply --yes` only when an interrupted thread is acceptable.
+- Machine daemons and their `bb` CLI update only after a protocol bump. See the next section.
+
 ## Daemon protocol version
 
 Machine daemons update themselves only when `HOST_DAEMON_PROTOCOL_VERSION` changes. Bump it in the fork to ship a daemon or `bb` CLI change to the machines.

@@ -13,6 +13,9 @@ proof: the switch ran from a detached script on Titan and kept the 0.48.1 plist 
 
 ## Details
 
+- 2026-11-10: `bb updates app apply --when-idle` is the built-in deploy. Source mode pulls origin/main (hmps/bb), installs, builds, and restarts. Use it before a manual restart. See fork/README.md "Deploy the fork".
+- The shell `bb` on Titan is a stale mise npm bb-app 0.48.1. The fork CLI is `~/dev/forks/bb/apps/host-daemon/dist/bb`.
+
 - The mise `pnpm` shim on Titan has no version. Use the corepack pnpm in `~/.local/share/bb-fork-bin`. The plist puts that folder first on PATH and sets `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`.
 - Run `pnpm build` once after `pnpm install`. `pnpm start -- --dryrun` fails on a fresh clone because generated modules are missing.
 - Run restarts from a detached script on Titan (`nohup`). A protocol change makes the client daemons update and restart, which can end the agent session that started the switch.
