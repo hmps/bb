@@ -1345,24 +1345,26 @@ export function ThreadDetailPromptArea({
   >(null);
   const sentDecisionSetIdsRef = useRef(new Set<string>());
   const canAutoSendDecisions =
+    !isHandoffSelection &&
     !isAttachingBottomFiles &&
     !isFollowUpSubmitting &&
     !isDefaultExecutionOptionsLoading;
   const handleAllDecisionsPicked = useCallback(() => {
-    const setId = decisionAnswers.openSet?.id ?? null;
-    if (setId === null || sentDecisionSetIdsRef.current.has(setId)) return;
-    setAutoSendDecisionSetId(setId);
+    setAutoSendDecisionSetId(decisionAnswers.openSet?.id ?? null);
   }, [decisionAnswers.openSet?.id]);
   useEffect(() => {
     if (autoSendDecisionSetId === null) return;
+    setAutoSendDecisionSetId(null);
     const openSet = decisionAnswers.openSet;
-    if (openSet === null || openSet.id !== autoSendDecisionSetId) {
-      setAutoSendDecisionSetId(null);
+    if (
+      openSet === null ||
+      openSet.id !== autoSendDecisionSetId ||
+      sentDecisionSetIdsRef.current.has(openSet.id) ||
+      decisionAnswers.picks.size < openSet.decisions.length ||
+      !canAutoSendDecisions
+    ) {
       return;
     }
-    if (decisionAnswers.picks.size < openSet.decisions.length) return;
-    if (!canAutoSendDecisions) return;
-    setAutoSendDecisionSetId(null);
     void handleSend()
       .then(() => {
         sentDecisionSetIdsRef.current.add(openSet.id);

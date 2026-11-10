@@ -699,7 +699,7 @@ describe("ThreadDetailPromptArea", () => {
     expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1);
   });
 
-  it("waits for model options before it sends the picked decisions", async () => {
+  it("keeps the picks for a manual send when model options still load", async () => {
     openOneDecisionSet();
     mocks.defaultExecutionOptions = undefined;
     mocks.promptDraft.text = "Also update the guide.";
@@ -709,8 +709,6 @@ describe("ThreadDetailPromptArea", () => {
     const { rerender } = renderPromptArea(options);
 
     await pickLastDecision();
-    expect(mocks.sendMessageMutateAsync).not.toHaveBeenCalled();
-
     mocks.defaultExecutionOptions = {
       model: "gpt-5",
       permissionMode: "auto",
@@ -719,16 +717,15 @@ describe("ThreadDetailPromptArea", () => {
       source: "client/turn/requested",
     };
     rerender(buildPromptAreaElement(options));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
-    await waitFor(() =>
-      expect(mocks.sendMessageMutateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({ input: AUTO_SENT_DECISION_INPUT }),
-      ),
-    );
-    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessageMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId("decision-picks").textContent).toBe("0:1");
   });
 
-  it("waits for a pending upload before it sends the picked decisions", async () => {
+  it("keeps the picks for a manual send when an upload is pending", async () => {
     const upload = createDeferredPromise<{
       mimeType: string;
       name: string;
@@ -736,13 +733,6 @@ describe("ThreadDetailPromptArea", () => {
       sizeBytes: number;
       type: "localFile";
     }>();
-    const uploaded = {
-      mimeType: "text/plain",
-      name: "queued.txt",
-      path: "thread-storage/uploads/queued.txt",
-      sizeBytes: 6,
-      type: "localFile" as const,
-    };
     mocks.uploadPromptAttachmentMutateAsync.mockReturnValueOnce(upload.promise);
     openOneDecisionSet();
     mocks.promptDraft.text = "Also update the guide.";
@@ -752,19 +742,13 @@ describe("ThreadDetailPromptArea", () => {
     fireEvent.click(screen.getByRole("button", { name: "Attach file" }));
 
     await pickLastDecision();
-    expect(mocks.sendMessageMutateAsync).not.toHaveBeenCalled();
-
     await act(async () => {
-      upload.resolve(uploaded);
+      upload.reject(new Error("upload failed"));
+      await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    await waitFor(() =>
-      expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1),
-    );
-    expect(mocks.promptDraft.addAttachment).toHaveBeenCalledWith(uploaded);
-    expect(
-      mocks.promptDraft.addAttachment.mock.invocationCallOrder[0],
-    ).toBeLessThan(mocks.sendMessageMutateAsync.mock.invocationCallOrder[0]!);
+    expect(mocks.sendMessageMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId("decision-picks").textContent).toBe("0:1");
   });
 
   it("does not send a set again while its sent answer is still listed as open", async () => {
