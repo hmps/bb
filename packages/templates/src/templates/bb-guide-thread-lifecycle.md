@@ -20,6 +20,7 @@ Lifecycle:
     --self                                 Target current thread
 
   cancel-plan and clear-goal wait for the provider to confirm.
+
   A running agent session keeps the tools and instructions it started with.
   After you turn on an experiment or install a plugin tool, run
   `thread restart-session` so an existing thread picks them up. It refuses a
@@ -27,6 +28,7 @@ Lifecycle:
   the same call as `thread stop`. The conversation stays, and the next message
   resumes it in a new session. The thread menu has the same Restart session
   item.
+
   `thread compact` enqueues the same structured /compact turn used by the
   composer. Follow the thread timeline for the eventual compaction result.
   `thread clear` keeps the BB thread, workspace, durable event history, and
