@@ -628,6 +628,67 @@ describe("ThreadDetailPromptArea", () => {
     expect(screen.getByTestId("decision-picks").textContent).toBe("0:1");
   });
 
+  it("sends the answer as soon as the last decision is picked", async () => {
+    testQueryClient.setQueryData(
+      systemConfigQueryKey(),
+      makeSystemConfig({
+        experiments: { ...defaultExperiments, decisionCards: true },
+      }),
+    );
+    mocks.decisionSets = [
+      {
+        id: "tds_1",
+        threadId: "thr_1",
+        turnId: "turn_1",
+        toolCallId: "call_1",
+        headline: "One choice",
+        decisions: [
+          {
+            question: "Ship behind a flag?",
+            context: "Context.",
+            options: [
+              { label: "Flag it", does: "Only you see it" },
+              { label: "Ship to all", does: "Everyone gets it" },
+            ],
+            suggested: 0,
+            links: [],
+          },
+        ],
+        status: "open",
+        resolutionRequestId: null,
+        resolutionText: null,
+        createdAt: 1,
+        resolvedAt: null,
+      },
+    ];
+    mocks.promptDraft.text = "Also update the guide.";
+    renderPromptArea({
+      thread: makeThread({ runtime: { displayStatus: "idle" } }),
+    });
+
+    await act(async () => {
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Pick last option" }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(mocks.sendMessageMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "thr_1",
+          input: [
+            {
+              type: "text",
+              text: "Decision 1 — Ship behind a flag?: Ship to all\nAlso update the guide.",
+              mentions: [],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(mocks.sendMessageMutateAsync).toHaveBeenCalledTimes(1);
+  });
+
   it("sends decision picks with the draft and clears them after the send", async () => {
     const decisions: ThreadDecision[] = [
       {

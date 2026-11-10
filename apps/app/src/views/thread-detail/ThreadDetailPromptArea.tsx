@@ -1340,6 +1340,28 @@ export function ThreadDetailPromptArea({
       submitDraft(() => submitFollowUpDraft(extras)),
     [submitDraft, submitFollowUpDraft],
   );
+  const [autoSendDecisionSetId, setAutoSendDecisionSetId] = useState<
+    string | null
+  >(null);
+  const handleAllDecisionsPicked = useCallback(() => {
+    setAutoSendDecisionSetId(decisionAnswers.openSet?.id ?? null);
+  }, [decisionAnswers.openSet?.id]);
+  useEffect(() => {
+    if (autoSendDecisionSetId === null) return;
+    const openSet = decisionAnswers.openSet;
+    if (openSet === null || openSet.id !== autoSendDecisionSetId) {
+      setAutoSendDecisionSetId(null);
+      return;
+    }
+    if (decisionAnswers.picks.size < openSet.decisions.length) return;
+    setAutoSendDecisionSetId(null);
+    void handleSend().catch(() => {});
+  }, [
+    autoSendDecisionSetId,
+    decisionAnswers.openSet,
+    decisionAnswers.picks,
+    handleSend,
+  ]);
   const handleModifierSubmit = useCallback(
     async ({ sendAt, pluginSubmission }: ComposerSubmitExtras = {}) => {
       if (!canSubmitModifierShortcut) {
@@ -2207,6 +2229,7 @@ export function ThreadDetailPromptArea({
             threadId={thread.id}
             answers={decisionAnswers}
             onSomethingElse={focusBottomPluginComposer}
+            onAllPicked={handleAllDecisionsPicked}
           />
         )}
         {shouldHideComposer ? null : queuedMessagesPending ? (

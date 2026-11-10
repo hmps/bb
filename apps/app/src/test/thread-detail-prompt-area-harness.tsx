@@ -443,7 +443,13 @@ vi.mock("@/hooks/queries/thread-decisions", () => ({
 }));
 
 vi.mock("@/components/thread/decisions/DecisionCard", () => ({
-  DecisionCard: ({ answers }: { answers: ThreadDecisionAnswers }) =>
+  DecisionCard: ({
+    answers,
+    onAllPicked,
+  }: {
+    answers: ThreadDecisionAnswers;
+    onAllPicked: () => void;
+  }) =>
     answers.openSet === null ? null : (
       <div data-testid="decision-card">
         <span data-testid="decision-picks">
@@ -453,6 +459,15 @@ vi.mock("@/components/thread/decisions/DecisionCard", () => ({
         </span>
         <button type="button" onClick={() => answers.pick(0, 1)}>
           Pick second option
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            answers.pick(0, 1);
+            onAllPicked();
+          }}
+        >
+          Pick last option
         </button>
       </div>
     ),
