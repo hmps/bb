@@ -124,7 +124,7 @@ upstream_protocol="$(git show "${upstream_ref}:${protocol_file}" | protocol_vers
 unresolved="$(git diff --name-only --diff-filter=U)"
 if grep -qx "$protocol_file" <<<"$unresolved"; then
   echo "Set HOST_DAEMON_PROTOCOL_VERSION in ${protocol_file} above upstream ${upstream_protocol}, and update packages/host-daemon-contract/test/contract.test.ts."
-elif [[ -z "$unresolved" ]]; then
+else
   merged_protocol="$(protocol_version <"$protocol_file")"
   if [[ -z "$merged_protocol" || -z "$upstream_protocol" || "$merged_protocol" -le "$upstream_protocol" ]]; then
     echo "error: the fork HOST_DAEMON_PROTOCOL_VERSION (${merged_protocol:-unknown}) must be above upstream (${upstream_protocol:-unknown})." >&2
