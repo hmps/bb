@@ -31,6 +31,14 @@ Always merge. Do not rebase or squash an upstream sync. The merge commit records
 - A fork migration must only contain `CREATE TABLE` and `CREATE INDEX` statements for fork-owned tables. Do not alter upstream tables. Upstream migrations rebuild their tables and copy only the columns that upstream knows, so a fork column on an upstream table loses its data.
 - The script supports one fork migration. drizzle-kit puts all fork schema changes into one generated migration, so the script cannot regenerate two migrations separately. Extend the script before you add a second fork migration.
 
+## Daemon protocol version
+
+Machine daemons update themselves only when `HOST_DAEMON_PROTOCOL_VERSION` changes. Bump it in the fork to ship a daemon or `bb` CLI change to the machines.
+
+- Keep the fork value above upstream's value. An equal number tells a daemon that two different contracts match.
+- On a merge conflict, set the value above both sides. Update `packages/host-daemon-contract/test/contract.test.ts`.
+- The script stops when the merged value is not above upstream's value.
+
 ## Why the migrations move
 
 Drizzle applies only migrations that are newer than the last applied migration. This can skip an upstream migration whose timestamp precedes an applied fork migration.
