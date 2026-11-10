@@ -116,6 +116,7 @@ function PromptStack() {
         threadId={THREAD_ID}
         answers={answers}
         onSomethingElse={() => composerRef.current?.focus()}
+        onAllPicked={() => {}}
       />
       <textarea
         ref={composerRef}

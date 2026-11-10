@@ -47,12 +47,14 @@ interface DecisionCardProps {
   threadId: string;
   answers: ThreadDecisionAnswers;
   onSomethingElse: () => void;
+  onAllPicked: () => void;
 }
 
 export function DecisionCard({
   threadId,
   answers,
   onSomethingElse,
+  onAllPicked,
 }: DecisionCardProps) {
   if (answers.openSet === null) return null;
   return (
@@ -62,6 +64,7 @@ export function DecisionCard({
       set={answers.openSet}
       answers={answers}
       onSomethingElse={onSomethingElse}
+      onAllPicked={onAllPicked}
     />
   );
 }
@@ -83,6 +86,7 @@ function DecisionSetCard({
   set,
   answers,
   onSomethingElse,
+  onAllPicked,
 }: DecisionCardProps & { set: ThreadDecisionSet }) {
   const count = set.decisions.length;
   const [requestedPage, setPage] = useState(0);
@@ -114,6 +118,7 @@ function DecisionSetCard({
     );
     if (next === null) {
       setIsDrawerOpen(false);
+      onAllPicked();
       return;
     }
     setPage(next);

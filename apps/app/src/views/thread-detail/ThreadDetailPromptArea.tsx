@@ -1340,6 +1340,43 @@ export function ThreadDetailPromptArea({
       submitDraft(() => submitFollowUpDraft(extras)),
     [submitDraft, submitFollowUpDraft],
   );
+  const [autoSendDecisionSetId, setAutoSendDecisionSetId] = useState<
+    string | null
+  >(null);
+  const sentDecisionSetIdsRef = useRef(new Set<string>());
+  const canAutoSendDecisions =
+    !isHandoffSelection &&
+    !isAttachingBottomFiles &&
+    !isFollowUpSubmitting &&
+    !isDefaultExecutionOptionsLoading;
+  const handleAllDecisionsPicked = useCallback(() => {
+    setAutoSendDecisionSetId(decisionAnswers.openSet?.id ?? null);
+  }, [decisionAnswers.openSet?.id]);
+  useEffect(() => {
+    if (autoSendDecisionSetId === null) return;
+    setAutoSendDecisionSetId(null);
+    const openSet = decisionAnswers.openSet;
+    if (
+      openSet === null ||
+      openSet.id !== autoSendDecisionSetId ||
+      sentDecisionSetIdsRef.current.has(openSet.id) ||
+      decisionAnswers.picks.size < openSet.decisions.length ||
+      !canAutoSendDecisions
+    ) {
+      return;
+    }
+    void handleSend()
+      .then(() => {
+        sentDecisionSetIdsRef.current.add(openSet.id);
+      })
+      .catch(() => {});
+  }, [
+    autoSendDecisionSetId,
+    canAutoSendDecisions,
+    decisionAnswers.openSet,
+    decisionAnswers.picks,
+    handleSend,
+  ]);
   const handleModifierSubmit = useCallback(
     async ({ sendAt, pluginSubmission }: ComposerSubmitExtras = {}) => {
       if (!canSubmitModifierShortcut) {
@@ -2207,6 +2244,7 @@ export function ThreadDetailPromptArea({
             threadId={thread.id}
             answers={decisionAnswers}
             onSomethingElse={focusBottomPluginComposer}
+            onAllPicked={handleAllDecisionsPicked}
           />
         )}
         {shouldHideComposer ? null : queuedMessagesPending ? (

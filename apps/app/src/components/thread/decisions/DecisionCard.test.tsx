@@ -111,7 +111,13 @@ const decisionSet: ThreadDecisionSet = {
   ],
 };
 
-function Harness({ onSend }: { onSend: (input: PromptInput[]) => void }) {
+function Harness({
+  onSend,
+  onAllPicked,
+}: {
+  onSend: (input: PromptInput[]) => void;
+  onAllPicked: () => void;
+}) {
   const answers = useThreadDecisionAnswers("thr_1");
   const [message, setMessage] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -121,6 +127,7 @@ function Harness({ onSend }: { onSend: (input: PromptInput[]) => void }) {
         threadId="thr_1"
         answers={answers}
         onSomethingElse={() => composerRef.current?.focus()}
+        onAllPicked={onAllPicked}
       />
       <textarea
         ref={composerRef}
@@ -148,6 +155,7 @@ function Harness({ onSend }: { onSend: (input: PromptInput[]) => void }) {
 
 function renderCard({ compact = false } = {}) {
   const onSend = vi.fn<(input: PromptInput[]) => void>();
+  const onAllPicked = vi.fn<() => void>();
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -156,13 +164,13 @@ function renderCard({ compact = false } = {}) {
       <MemoryRouter>
         <AppCommandProvider>
           <CompactViewportOverrideProvider isCompactViewport={compact}>
-            <Harness onSend={onSend} />
+            <Harness onSend={onSend} onAllPicked={onAllPicked} />
           </CompactViewportOverrideProvider>
         </AppCommandProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { onSend };
+  return { onSend, onAllPicked };
 }
 
 function pressKey(key: string, target: EventTarget = window) {
@@ -307,6 +315,16 @@ describe("DecisionCard", () => {
     );
     expect(within(chips).queryByText("1 · Ship to all")).toBeNull();
     expect(option(/Ship to all/).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("reports all picked only after the last open decision gets a pick", async () => {
+    const { onAllPicked } = renderCard();
+    await screen.findByText("Ship behind a flag?");
+    fireEvent.click(option(/Ship to all/));
+    fireEvent.click(option(/Two PRs/));
+    expect(onAllPicked).not.toHaveBeenCalled();
+    fireEvent.click(option(/Later/));
+    expect(onAllPicked).toHaveBeenCalledTimes(1);
   });
 
   it("composes one message from the picks and the free text", async () => {
