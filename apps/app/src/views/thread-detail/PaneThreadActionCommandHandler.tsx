@@ -10,12 +10,14 @@ const PANE_THREAD_ACTION_COMMANDS = [
   "thread.pin",
   "thread.markRead",
   "thread.archive",
+  "thread.restartSession",
 ] as const;
 
 const PANE_THREAD_ACTION_KEYS = [
   `${CORE_THREAD_ACTION_OWNER}/pin`,
   `${CORE_THREAD_ACTION_OWNER}/read`,
   `${CORE_THREAD_ACTION_OWNER}/archive`,
+  `${CORE_THREAD_ACTION_OWNER}/restartSession`,
 ];
 
 export function PaneThreadActionCommandHandler({

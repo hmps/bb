@@ -8,9 +8,13 @@ import {
   type PluginThreadActionRegistration,
   type PluginThreadActionTarget,
 } from "@get-bb/plugin-sdk";
-import { threadParentNotificationsSchema } from "@bb/domain";
+import {
+  canRestartThreadSession,
+  threadParentNotificationsSchema,
+} from "@bb/domain";
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { useThreadActions } from "@/components/thread/ThreadActionsProvider";
+import { useStopThread } from "@/hooks/mutations/thread-runtime-mutations";
 import { useRouteState } from "@/hooks/useRouteState";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
 import { appToast } from "@/components/ui/app-toast";
@@ -384,6 +388,28 @@ export const CORE_THREAD_ACTIONS: readonly PluginThreadActionRegistration<unknow
         parentNotificationsAction([thread], childThreads([thread]), sdk),
       experimental_bulkItem: ({ threads, sdk }) =>
         parentNotificationsAction(threads, childThreads(threads), sdk),
+    }),
+    coreThreadAction({
+      id: "restartSession",
+      group: GROUPS.state,
+      order: 70,
+      title: "Restart session",
+      icon: "ArrowReloadHorizontal",
+      useData: useStopThread,
+      item: ({ thread, data: stopThread }) =>
+        canRestartThreadSession(thread.status)
+          ? {
+              label: "Restart session",
+              icon: "ArrowReloadHorizontal",
+              run: () =>
+                stopThread.mutate(thread.id, {
+                  onSuccess: () =>
+                    appToast.success(
+                      "Session ended. The next message starts a new session.",
+                    ),
+                }),
+            }
+          : null,
     }),
     coreThreadAction({
       id: "rename",

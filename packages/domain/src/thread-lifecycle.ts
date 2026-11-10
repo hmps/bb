@@ -109,3 +109,7 @@ export function evaluateThreadLifecycleEvent(
   }
   return { to };
 }
+
+export function canRestartThreadSession(status: ThreadStatus): boolean {
+  return status === "idle" || status === "error";
+}

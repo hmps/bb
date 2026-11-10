@@ -265,9 +265,10 @@ in the current window, like the sidebar arrows. `thread.previous` /
 `thread.next` follow sidebar order instead: `Mod+Shift+[` / `Mod+Shift+]`
 on desktop and `Control+Shift+[` / `Control+Shift+]` on the web.
 
-`thread.rename`, `thread.archive`, `thread.markRead`, and `thread.pin` start
-unbound and act on the focused pane's open thread; Mark read and Pin toggle
-like the matching thread menu item.
+`thread.rename`, `thread.archive`, `thread.markRead`, `thread.pin`, and
+`thread.restartSession` start unbound and act on the focused pane's open
+thread; Mark read and Pin toggle like the matching thread menu item, and
+Restart session applies only to an idle or errored thread.
 
 An open question card binds `question.select.1`–`9` (`1`–`9`),
 `question.submit` (`Mod+Enter`: Next, or Submit on the last question),

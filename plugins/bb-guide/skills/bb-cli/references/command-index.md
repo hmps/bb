@@ -201,6 +201,7 @@ Use `--selected-model <model-id>` to discover its reasoning choices and include 
 - `bb thread send`
 - `bb thread retry`
 - `bb thread stop`
+- `bb thread restart-session`
 - `bb thread compact`
 - `bb thread context`
 - `bb thread commands`
