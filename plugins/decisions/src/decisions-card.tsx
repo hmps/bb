@@ -18,6 +18,7 @@ import { answerLabel } from "./answer.js";
 import {
   interactionPayloadSchema,
   isThreadRef,
+  MAX_OWN_ANSWER_LENGTH,
   type Decision,
   type DecisionAnswer,
   type InteractionPayload,
@@ -494,6 +495,7 @@ function OwnAnswer({
         ref={inputRef}
         type="text"
         value={text}
+        maxLength={MAX_OWN_ANSWER_LENGTH}
         onChange={(event) => onType(event.target.value)}
         placeholder="Something else…"
         aria-label={`Your own answer for decision ${decisionIndex + 1}`}
