@@ -190,7 +190,10 @@ function DecisionSetCard({
       onChoose={choose}
       onType={(text) => {
         if (text.trim().length > 0) answers.pick(page, { text });
-        else if (answers.picks.has(page)) answers.unpick(page);
+        else {
+          const current = answers.picks.get(page);
+          if (current !== undefined && "text" in current) answers.unpick(page);
+        }
       }}
     />
   );

@@ -407,6 +407,14 @@ describe("DecisionCard", () => {
     fireEvent.change(field, { target: { value: "  " } });
     expect(screen.queryByRole("list", { name: "Picked answers" })).toBeNull();
     expect((field as HTMLInputElement).value).toBe("");
+
+    fireEvent.click(option(/Ship to all/));
+    fireEvent.click(screen.getByRole("button", { name: "Previous decision" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Your own answer for decision 1" }),
+      { target: { value: " " } },
+    );
+    expect(screen.getByText("1 · Ship to all")).toBeTruthy();
   });
 
   it("reports all picked when Enter submits the last typed answer", async () => {
