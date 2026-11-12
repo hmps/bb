@@ -11,7 +11,7 @@ export function decisionPickLabel(
   decision: ThreadDecision | undefined,
   pick: DecisionPick,
 ): string {
-  if ("text" in pick) return pick.text;
+  if ("text" in pick) return pick.text.trim();
   return decision?.options[pick.optionIndex]?.label ?? "";
 }
 

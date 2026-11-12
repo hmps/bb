@@ -234,6 +234,11 @@ describe("bb thread decisions", () => {
       "Decision 2 — When should we release?: Later",
     ],
     [
+      "an own answer for one decision",
+      ["--answer", "1=  Use a file  "],
+      "Decision 1 — Where should records live?: Use a file",
+    ],
+    [
       "free text only",
       ["--text", "Use a file instead."],
       "Use a file instead.",
@@ -287,6 +292,14 @@ describe("bb thread decisions", () => {
     [["--pick", "3=1"], "Invalid decision index: 3"],
     [["--pick", "1=3"], "Invalid option index for decision 1: 3"],
     [["--pick", "1=1", "--pick", "1=2"], "Decision 1 has multiple picks"],
+    [["--answer", "1"], "Invalid --answer"],
+    [["--answer", "0=Use a file"], "Invalid --answer"],
+    [["--answer", "1=  "], "Decision 1 has an empty answer"],
+    [["--answer", "3=Use a file"], "Invalid decision index: 3"],
+    [
+      ["--pick", "1=1", "--answer", "1=Use a file"],
+      "Decision 1 has multiple picks",
+    ],
   ])("rejects invalid answers %j before sending", async (flags, error) => {
     const send = vi.fn();
     stubServerApi({
@@ -393,6 +406,7 @@ describe("bb thread decisions", () => {
     );
     for (const flag of [
       "--pick <decision=option>",
+      "--answer <decision=text>",
       "--text <text>",
       "--self",
       "--json",

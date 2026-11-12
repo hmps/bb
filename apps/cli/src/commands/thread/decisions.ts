@@ -1,5 +1,8 @@
 import { Command } from "commander";
-import { composeThreadDecisionAnswer } from "@bb/core-ui";
+import {
+  composeThreadDecisionAnswer,
+  type ThreadDecisionAnswerPick,
+} from "@bb/core-ui";
 import type { ThreadDecisionSet } from "@bb/domain";
 import type { BbSdk } from "@bb/sdk";
 import { action } from "../../action.js";
@@ -23,6 +26,7 @@ interface DecisionListOptions extends DecisionTargetOptions {
 
 interface DecisionAnswerOptions extends DecisionTargetOptions {
   pick: string[];
+  answer: string[];
   text: string;
 }
 
@@ -84,6 +88,16 @@ function parsePick(value: string): {
     decisionIndex: Number(match[1]) - 1,
     optionIndex: Number(match[2]) - 1,
   };
+}
+
+function parseAnswer(value: string): ThreadDecisionAnswerPick {
+  const match = /^([1-9]\d*)=([\s\S]*)$/.exec(value);
+  if (!match) {
+    throw new Error(
+      "Invalid --answer. Expected decision=text with a one-based index, such as 2=Use SQLite.",
+    );
+  }
+  return { decisionIndex: Number(match[1]) - 1, text: match[2] };
 }
 
 export function registerDecisionCommands(
@@ -157,11 +171,19 @@ export function registerDecisionCommands(
 
   decisions
     .command("answer <decisionSetId> [id]")
-    .description("Send decision picks and free text as a normal thread message")
+    .description(
+      "Send decision picks, own answers, and free text as a normal thread message",
+    )
     .option("--self", "Target the current thread (from BB_THREAD_ID)")
     .option(
       "--pick <decision=option>",
       "Pick one option using one-based indexes (repeatable)",
+      collectOption,
+      [],
+    )
+    .option(
+      "--answer <decision=text>",
+      "Answer one decision with your own text (repeatable)",
       collectOption,
       [],
     )
@@ -184,7 +206,10 @@ export function registerDecisionCommands(
           }
           const text = composeThreadDecisionAnswer({
             decisions: set.decisions,
-            picks: opts.pick.map(parsePick),
+            picks: [
+              ...opts.pick.map(parsePick),
+              ...opts.answer.map(parseAnswer),
+            ],
             text: opts.text,
           });
           const result = await sdk.threads.send({

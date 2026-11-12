@@ -26,15 +26,19 @@ export const promptAreaMocks = {
   decisionAnswers: null as ThreadDecisionAnswers | null,
   decisionSets: null as ThreadDecisionSet[] | null,
   defaultExecutionOptions: null as
-    ResolvedThreadExecutionOptions | null | undefined,
+    | ResolvedThreadExecutionOptions
+    | null
+    | undefined,
   executionInputSources: {} as ExistingThreadExecutionInputSources,
   deleteQueuedMessageMutateAsync: vi.fn(),
   navigate: vi.fn(),
   pluginComposerHost: null as PluginComposerHost | null,
   composerSubmit: null as
-    ((extras?: ComposerSubmitExtras) => void | Promise<void>) | null,
+    | ((extras?: ComposerSubmitExtras) => void | Promise<void>)
+    | null,
   composerModifierSubmit: null as
-    ((extras?: ComposerSubmitExtras) => void | Promise<void>) | null,
+    | ((extras?: ComposerSubmitExtras) => void | Promise<void>)
+    | null,
   promptDraft: {
     addAttachment: vi.fn(),
     attachments: [] as PromptDraftAttachment[],

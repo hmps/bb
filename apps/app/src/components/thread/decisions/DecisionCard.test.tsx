@@ -360,13 +360,13 @@ describe("DecisionCard", () => {
     ]);
   });
 
-  it("uses a typed answer as the pick and moves to the next decision", async () => {
+  it("uses a typed answer as the pick and moves on with the return button", async () => {
     const { onSend } = renderCard();
     await screen.findByText("Ship behind a flag?");
     const field = screen.getByRole("textbox", {
       name: "Your own answer for decision 1",
     });
-    fireEvent.change(field, { target: { value: "  Flag it for staff  " } });
+    fireEvent.change(field, { target: { value: "Flag it for staff " } });
     fireEvent.click(screen.getByRole("button", { name: "Use this answer" }));
     expect(screen.getByText("Split the PR?")).toBeTruthy();
     const chips = screen.getByRole("list", { name: "Picked answers" });
@@ -378,12 +378,35 @@ describe("DecisionCard", () => {
     );
 
     fireEvent.click(within(chips).getByText("1 · Flag it for staff"));
-    const revisited = screen.getByRole("textbox", {
-      name: "Your own answer for decision 1",
-    });
-    expect((revisited as HTMLInputElement).value).toBe("Flag it for staff");
     fireEvent.click(option(/Ship to all/));
     expect(within(chips).getByText("1 · Ship to all")).toBeTruthy();
+    fireEvent.click(within(chips).getByText("1 · Ship to all"));
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Your own answer for decision 1",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("sends typed text without Enter and drops it when cleared", async () => {
+    const { onSend } = renderCard();
+    await screen.findByText("Ship behind a flag?");
+    const field = screen.getByRole("textbox", {
+      name: "Your own answer for decision 1",
+    });
+    fireEvent.change(field, { target: { value: "Use a flag" } });
+    fireEvent.change(field, { target: { value: "Use a staff flag" } });
+    expect(screen.getByText("Ship behind a flag?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sentText(onSend)).toBe(
+      "Decision 1 — Ship behind a flag?: Use a staff flag",
+    );
+
+    fireEvent.change(field, { target: { value: "  " } });
+    expect(screen.queryByRole("list", { name: "Picked answers" })).toBeNull();
+    expect((field as HTMLInputElement).value).toBe("");
   });
 
   it("reports all picked when Enter submits the last typed answer", async () => {

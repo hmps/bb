@@ -146,7 +146,8 @@ function DecisionSetCard({
         return false;
       }
       if (index === decision.options.length) {
-        customAnswerRef.current?.focus();
+        if (customAnswerRef.current === null) return false;
+        customAnswerRef.current.focus();
         return true;
       }
       choose({ optionIndex: index });
@@ -187,7 +188,10 @@ function DecisionSetCard({
       isCompact={isCompact}
       customAnswerRef={customAnswerRef}
       onChoose={choose}
-      onClear={() => answers.unpick(page)}
+      onType={(text) => {
+        if (text.trim().length > 0) answers.pick(page, { text });
+        else if (answers.picks.has(page)) answers.unpick(page);
+      }}
     />
   );
   const showSummary = isCompact || !isExpanded;
@@ -348,7 +352,7 @@ function DecisionPage({
   isCompact,
   customAnswerRef,
   onChoose,
-  onClear,
+  onType,
 }: {
   threadId: string;
   decision: ThreadDecision;
@@ -357,7 +361,7 @@ function DecisionPage({
   isCompact: boolean;
   customAnswerRef: RefObject<HTMLInputElement | null>;
   onChoose: (pick: DecisionPick) => void;
-  onClear: () => void;
+  onType: (text: string) => void;
 }) {
   const linkRouting = useMessageLinkRouting(threadId);
   const pickedOption =
@@ -447,10 +451,10 @@ function DecisionPage({
         <CustomAnswer
           decisionIndex={decisionIndex}
           optionNumber={decision.options.length + 1}
-          pickedText={pick !== null && "text" in pick ? pick.text : null}
+          text={pick !== null && "text" in pick ? pick.text : ""}
           inputRef={customAnswerRef}
-          onChoose={(text) => onChoose({ text })}
-          onClear={onClear}
+          onType={onType}
+          onSubmit={(text) => onChoose({ text })}
         />
       </div>
     </div>
@@ -460,34 +464,24 @@ function DecisionPage({
 function CustomAnswer({
   decisionIndex,
   optionNumber,
-  pickedText,
+  text,
   inputRef,
-  onChoose,
-  onClear,
+  onType,
+  onSubmit,
 }: {
   decisionIndex: number;
   optionNumber: number;
-  pickedText: string | null;
+  text: string;
   inputRef: RefObject<HTMLInputElement | null>;
-  onChoose: (text: string) => void;
-  onClear: () => void;
+  onType: (text: string) => void;
+  onSubmit: (text: string) => void;
 }) {
-  const [draft, setDraft] = useState(pickedText ?? "");
-  const answer = draft.trim();
-  const isPicked = pickedText !== null && answer === pickedText;
-  const canUse = answer.length > 0 && !isPicked;
-  const submit = () => {
-    if (answer.length > 0) {
-      if (!isPicked) onChoose(answer);
-      return;
-    }
-    if (pickedText !== null) onClear();
-  };
+  const isPicked = text.length > 0;
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
+        if (isPicked) onSubmit(text);
       }}
       className={cn(
         "flex min-h-9 w-full min-w-0 items-center gap-3 rounded-lg border py-0.5 pr-1 pl-3 text-sm transition-colors focus-within:border-timeline-accent/60",
@@ -510,14 +504,14 @@ function CustomAnswer({
       <input
         ref={inputRef}
         type="text"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        value={text}
+        onChange={(event) => onType(event.target.value)}
         placeholder="Something else…"
         aria-label={`Your own answer for decision ${decisionIndex + 1}`}
-        enterKeyHint="done"
+        enterKeyHint="next"
         className="min-w-0 flex-1 bg-transparent py-1 text-foreground outline-none placeholder:text-muted-foreground"
       />
-      {canUse ? (
+      {isPicked ? (
         <button
           type="submit"
           aria-label="Use this answer"
