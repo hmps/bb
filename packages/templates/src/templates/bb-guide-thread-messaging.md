@@ -93,6 +93,7 @@ Decision cards:
                                            Show each decision, context, options, links, and suggested option
   bb thread decisions answer <decision-set-id> [id] --pick 1=2 --pick 2=1
     --pick <decision=option>               Select an option; repeat for other decisions
+    --answer <decision=text>               Answer one decision with your own text; repeatable
     --text <text>                          Add free text, with or without picks
   bb thread decisions dismiss <decision-set-id> [id]
                                            Dismiss an open set without sending a message
@@ -100,9 +101,9 @@ Decision cards:
     --json                                 Machine-readable output (every subcommand)
 
   Decision and option numbers start at 1, as printed by `show`.
-  Select at most one option per decision. Partial answers are allowed.
+  Give at most one --pick or --answer per decision. Partial answers are allowed.
   `answer` sends a normal user message in auto mode. Each pick adds one line:
-  `Decision N — <question>: <label>`. Free text follows on the next line.
+  `Decision N — <question>: <label>`, or `<text>` for --answer. Free text follows on the next line.
   An accepted user message answers the whole open set, including omitted decisions.
   Agent and system messages do not answer it. Closed sets reject `answer` and `dismiss`.
   `show` can read a closed set. `list --all` includes the history.

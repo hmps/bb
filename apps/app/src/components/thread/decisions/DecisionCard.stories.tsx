@@ -115,7 +115,6 @@ function PromptStack() {
       <DecisionCard
         threadId={THREAD_ID}
         answers={answers}
-        onSomethingElse={() => composerRef.current?.focus()}
         onAllPicked={() => {}}
       />
       <textarea

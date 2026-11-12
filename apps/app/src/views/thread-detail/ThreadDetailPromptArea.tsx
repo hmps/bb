@@ -2243,7 +2243,6 @@ export function ThreadDetailPromptArea({
           <DecisionCard
             threadId={thread.id}
             answers={decisionAnswers}
-            onSomethingElse={focusBottomPluginComposer}
             onAllPicked={handleAllDecisionsPicked}
           />
         )}
@@ -2330,7 +2329,7 @@ export function ThreadDetailPromptArea({
       thread.id,
       answersDecisions,
       decisionAnswers,
-      focusBottomPluginComposer,
+      handleAllDecisionsPicked,
     ],
   );
 

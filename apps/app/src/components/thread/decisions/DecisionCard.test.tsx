@@ -126,7 +126,6 @@ function Harness({
       <DecisionCard
         threadId="thr_1"
         answers={answers}
-        onSomethingElse={() => composerRef.current?.focus()}
         onAllPicked={onAllPicked}
       />
       <textarea
@@ -256,9 +255,9 @@ describe("DecisionCard", () => {
     await screen.findByText("Ship behind a flag?");
 
     expect(
-      (await screen.findByRole("link", { name: /Earlier thread/ })).getAttribute(
-        "href",
-      ),
+      (
+        await screen.findByRole("link", { name: /Earlier thread/ })
+      ).getAttribute("href"),
     ).toBe(
       getThreadRoutePath({
         projectId: "proj_archive",
@@ -361,13 +360,98 @@ describe("DecisionCard", () => {
     ]);
   });
 
-  it("focuses the composer for Something else", async () => {
+  it("uses a typed answer as the pick and moves on with the return button", async () => {
+    const { onSend } = renderCard();
+    await screen.findByText("Ship behind a flag?");
+    const field = screen.getByRole("textbox", {
+      name: "Your own answer for decision 1",
+    });
+    fireEvent.change(field, { target: { value: "Flag it for staff " } });
+    fireEvent.click(screen.getByRole("button", { name: "Use this answer" }));
+    expect(screen.getByText("Split the PR?")).toBeTruthy();
+    const chips = screen.getByRole("list", { name: "Picked answers" });
+    expect(within(chips).getByText("1 · Flag it for staff")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sentText(onSend)).toBe(
+      "Decision 1 — Ship behind a flag?: Flag it for staff",
+    );
+
+    fireEvent.click(within(chips).getByText("1 · Flag it for staff"));
+    fireEvent.click(option(/Ship to all/));
+    expect(within(chips).getByText("1 · Ship to all")).toBeTruthy();
+    fireEvent.click(within(chips).getByText("1 · Ship to all"));
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Your own answer for decision 1",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("sends typed text without Enter and drops it when cleared", async () => {
+    const { onSend } = renderCard();
+    await screen.findByText("Ship behind a flag?");
+    const field = screen.getByRole("textbox", {
+      name: "Your own answer for decision 1",
+    });
+    fireEvent.change(field, { target: { value: "Use a flag" } });
+    fireEvent.change(field, { target: { value: "Use a staff flag" } });
+    expect(screen.getByText("Ship behind a flag?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sentText(onSend)).toBe(
+      "Decision 1 — Ship behind a flag?: Use a staff flag",
+    );
+
+    fireEvent.change(field, { target: { value: "  " } });
+    expect(screen.queryByRole("list", { name: "Picked answers" })).toBeNull();
+    expect((field as HTMLInputElement).value).toBe("");
+
+    fireEvent.click(option(/Ship to all/));
+    fireEvent.click(screen.getByRole("button", { name: "Previous decision" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Your own answer for decision 1" }),
+      { target: { value: " " } },
+    );
+    expect(screen.getByText("1 · Ship to all")).toBeTruthy();
+  });
+
+  it("reports all picked when Enter submits the last typed answer", async () => {
+    const { onAllPicked } = renderCard();
+    await screen.findByText("Ship behind a flag?");
+    fireEvent.click(option(/Flag it/));
+    fireEvent.click(option(/One PR/));
+    const field = screen.getByRole("textbox", {
+      name: "Your own answer for decision 3",
+    });
+    fireEvent.change(field, { target: { value: "Only a flag" } });
+    fireEvent.submit(field);
+    expect(onAllPicked).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not page or pick while the user types an answer", async () => {
     renderCard();
     await screen.findByText("Ship behind a flag?");
-    fireEvent.click(screen.getByRole("button", { name: "Something else…" }));
+    const field = screen.getByRole("textbox", {
+      name: "Your own answer for decision 1",
+    });
+    field.focus();
+    pressKey("ArrowRight", field);
+    pressKey("1", field);
+    expect(screen.getByText("Ship behind a flag?")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Picked answers" })).toBeNull();
+  });
+
+  it("focuses the answer field with the number after the last option", async () => {
+    renderCard();
+    await screen.findByText("Ship behind a flag?");
+    fireEvent.click(screen.getByRole("button", { name: "Next decision" }));
+    pressKey("3");
     expect(document.activeElement).toBe(
-      screen.getByRole("textbox", { name: "Message" }),
+      screen.getByRole("textbox", { name: "Your own answer for decision 2" }),
     );
+    expect(screen.queryByRole("list", { name: "Picked answers" })).toBeNull();
   });
 
   it("collapses to the header and chips, and expands again", async () => {

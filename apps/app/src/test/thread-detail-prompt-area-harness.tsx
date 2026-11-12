@@ -457,16 +457,22 @@ vi.mock("@/components/thread/decisions/DecisionCard", () => ({
       <div data-testid="decision-card">
         <span data-testid="decision-picks">
           {[...answers.picks]
-            .map(([decision, option]) => `${decision}:${option}`)
+            .map(
+              ([decision, pick]) =>
+                `${decision}:${"text" in pick ? pick.text : pick.optionIndex}`,
+            )
             .join(",")}
         </span>
-        <button type="button" onClick={() => answers.pick(0, 1)}>
+        <button
+          type="button"
+          onClick={() => answers.pick(0, { optionIndex: 1 })}
+        >
           Pick second option
         </button>
         <button
           type="button"
           onClick={() => {
-            answers.pick(0, 1);
+            answers.pick(0, { optionIndex: 1 });
             onAllPicked();
           }}
         >
@@ -670,10 +676,7 @@ vi.mock("@/hooks/useThreadCreationOptions", async () => {
         reasoningOptions: promptAreaMocks.unknownReasoning
           ? []
           : [{ value: "medium", label: "Medium" }],
-        resolveReasoningForModel: (
-          _model: string,
-          reasoningLevel: string,
-        ) => ({
+        resolveReasoningForModel: (_model: string, reasoningLevel: string) => ({
           reasoningLevel,
           reasoningOptions: [{ value: reasoningLevel, label: reasoningLevel }],
         }),

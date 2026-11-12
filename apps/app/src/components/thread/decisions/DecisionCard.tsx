@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { type RefObject, useId, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   QUESTION_ACTION_APP_COMMAND_IDS,
@@ -34,7 +34,11 @@ import { useDismissThreadDecisions } from "@/hooks/mutations/thread-decision-mut
 import { isEditableKeyboardTarget } from "@/lib/app-keybindings";
 import { useUrlAnchorClickHandler } from "@/lib/url-open-routing";
 import { useOptionalPaneContext } from "@/views/thread-detail/PaneContext";
-import type { DecisionPicks } from "./decision-answer";
+import {
+  decisionPickLabel,
+  type DecisionPick,
+  type DecisionPicks,
+} from "./decision-answer";
 import type { ThreadDecisionAnswers } from "./useThreadDecisionAnswers";
 
 const ICON_BUTTON_CLASS =
@@ -46,14 +50,12 @@ const THREAD_REF_PATTERN = /^@thread:(thr_[a-z0-9]+)(?:#msg=(\d+))?$/;
 interface DecisionCardProps {
   threadId: string;
   answers: ThreadDecisionAnswers;
-  onSomethingElse: () => void;
   onAllPicked: () => void;
 }
 
 export function DecisionCard({
   threadId,
   answers,
-  onSomethingElse,
   onAllPicked,
 }: DecisionCardProps) {
   if (answers.openSet === null) return null;
@@ -63,7 +65,6 @@ export function DecisionCard({
       threadId={threadId}
       set={answers.openSet}
       answers={answers}
-      onSomethingElse={onSomethingElse}
       onAllPicked={onAllPicked}
     />
   );
@@ -85,7 +86,6 @@ function DecisionSetCard({
   threadId,
   set,
   answers,
-  onSomethingElse,
   onAllPicked,
 }: DecisionCardProps & { set: ThreadDecisionSet }) {
   const count = set.decisions.length;
@@ -101,20 +101,27 @@ function DecisionSetCard({
   const bodyId = `${baseId}-body`;
   const decision = set.decisions[page];
   const pickedCount = answers.picks.size;
+  const customAnswerRef = useRef<HTMLInputElement>(null);
 
   const goTo = (index: number) => {
     setPage(Math.max(0, Math.min(count - 1, index)));
   };
-  const choose = (optionIndex: number) => {
-    if (answers.picks.get(page) === optionIndex) {
+  const choose = (pick: DecisionPick) => {
+    const current = answers.picks.get(page);
+    if (
+      "optionIndex" in pick &&
+      current !== undefined &&
+      "optionIndex" in current &&
+      current.optionIndex === pick.optionIndex
+    ) {
       answers.unpick(page);
       return;
     }
-    answers.pick(page, optionIndex);
+    answers.pick(page, pick);
     const next = nextUnpickedPage(
       count,
       page,
-      new Map(answers.picks).set(page, optionIndex),
+      new Map(answers.picks).set(page, pick),
     );
     if (next === null) {
       setIsDrawerOpen(false);
@@ -128,10 +135,6 @@ function DecisionSetCard({
     if (isCompact) setIsDrawerOpen(true);
     else setIsExpanded(true);
   };
-  const somethingElse = () => {
-    setIsDrawerOpen(false);
-    onSomethingElse();
-  };
 
   const keysEnabled = isFocusedPane && (isCompact ? isDrawerOpen : isExpanded);
   useAppCommandContext("questionOpen", keysEnabled);
@@ -139,10 +142,15 @@ function DecisionSetCard({
     QUESTION_SELECT_APP_COMMAND_IDS,
     (index, invocation) => {
       if (isEditableKeyboardTarget(invocation.target)) return false;
-      if (decision === undefined || index >= decision.options.length) {
+      if (decision === undefined || index > decision.options.length) {
         return false;
       }
-      choose(index);
+      if (index === decision.options.length) {
+        if (customAnswerRef.current === null) return false;
+        customAnswerRef.current.focus();
+        return true;
+      }
+      choose({ optionIndex: index });
       return true;
     },
     100,
@@ -150,7 +158,8 @@ function DecisionSetCard({
   );
   useIndexedAppCommandHandlers(
     QUESTION_ACTION_APP_COMMAND_IDS,
-    (index) => {
+    (index, invocation) => {
+      if (isEditableKeyboardTarget(invocation.target)) return false;
       const command = QUESTION_ACTION_APP_COMMAND_IDS[index];
       if (command === "question.previous" && page > 0) {
         goTo(page - 1);
@@ -171,13 +180,21 @@ function DecisionSetCard({
   const pager = <DecisionPager page={page} count={count} onGoTo={goTo} />;
   const decisionPage = (
     <DecisionPage
+      key={page}
       threadId={threadId}
       decision={decision}
       decisionIndex={page}
-      pickedOption={answers.picks.get(page) ?? null}
+      pick={answers.picks.get(page) ?? null}
       isCompact={isCompact}
+      customAnswerRef={customAnswerRef}
       onChoose={choose}
-      onSomethingElse={somethingElse}
+      onType={(text) => {
+        if (text.trim().length > 0) answers.pick(page, { text });
+        else {
+          const current = answers.picks.get(page);
+          if (current !== undefined && "text" in current) answers.unpick(page);
+        }
+      }}
     />
   );
   const showSummary = isCompact || !isExpanded;
@@ -334,20 +351,24 @@ function DecisionPage({
   threadId,
   decision,
   decisionIndex,
-  pickedOption,
+  pick,
   isCompact,
+  customAnswerRef,
   onChoose,
-  onSomethingElse,
+  onType,
 }: {
   threadId: string;
   decision: ThreadDecision;
   decisionIndex: number;
-  pickedOption: number | null;
+  pick: DecisionPick | null;
   isCompact: boolean;
-  onChoose: (optionIndex: number) => void;
-  onSomethingElse: () => void;
+  customAnswerRef: RefObject<HTMLInputElement | null>;
+  onChoose: (pick: DecisionPick) => void;
+  onType: (text: string) => void;
 }) {
   const linkRouting = useMessageLinkRouting(threadId);
+  const pickedOption =
+    pick !== null && "optionIndex" in pick ? pick.optionIndex : null;
   return (
     <div className="flex flex-col gap-2.5 px-3 pt-2.5 pb-3">
       <h3 className="text-base text-foreground">{decision.question}</h3>
@@ -384,7 +405,7 @@ function DecisionPage({
               key={optionIndex}
               type="button"
               aria-pressed={isPicked}
-              onClick={() => onChoose(optionIndex)}
+              onClick={() => onChoose({ optionIndex })}
               className={cn(
                 "flex min-h-9 w-full min-w-0 cursor-pointer gap-3 rounded-lg border px-3 py-1.5 text-left text-sm transition-colors",
                 isCompact ? "items-start" : "items-center",
@@ -430,16 +451,79 @@ function DecisionPage({
             </button>
           );
         })}
-        <button
-          type="button"
-          onClick={onSomethingElse}
-          className="flex min-h-9 w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground"
-        >
-          <span aria-hidden="true" className="w-3 shrink-0" />
-          Something else…
-        </button>
+        <CustomAnswer
+          decisionIndex={decisionIndex}
+          optionNumber={decision.options.length + 1}
+          text={pick !== null && "text" in pick ? pick.text : ""}
+          inputRef={customAnswerRef}
+          onType={onType}
+          onSubmit={(text) => onChoose({ text })}
+        />
       </div>
     </div>
+  );
+}
+
+function CustomAnswer({
+  decisionIndex,
+  optionNumber,
+  text,
+  inputRef,
+  onType,
+  onSubmit,
+}: {
+  decisionIndex: number;
+  optionNumber: number;
+  text: string;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onType: (text: string) => void;
+  onSubmit: (text: string) => void;
+}) {
+  const isPicked = text.length > 0;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (isPicked) onSubmit(text);
+      }}
+      className={cn(
+        "flex min-h-9 w-full min-w-0 items-center gap-3 rounded-lg border py-0.5 pr-1 pl-3 text-sm transition-colors focus-within:border-timeline-accent/60",
+        isPicked
+          ? "border-timeline-accent bg-timeline-accent/15"
+          : "border-transparent bg-surface-recessed",
+      )}
+    >
+      <span className="flex w-3 shrink-0 justify-center text-xs tabular-nums text-muted-foreground">
+        {isPicked ? (
+          <Icon
+            name="Check"
+            className="size-3.5 text-timeline-accent"
+            aria-hidden="true"
+          />
+        ) : (
+          optionNumber
+        )}
+      </span>
+      <input
+        ref={inputRef}
+        type="text"
+        value={text}
+        onChange={(event) => onType(event.target.value)}
+        placeholder="Something else…"
+        aria-label={`Your own answer for decision ${decisionIndex + 1}`}
+        enterKeyHint="next"
+        className="min-w-0 flex-1 bg-transparent py-1 text-foreground outline-none placeholder:text-muted-foreground"
+      />
+      {isPicked ? (
+        <button
+          type="submit"
+          aria-label="Use this answer"
+          className={ICON_BUTTON_CLASS}
+        >
+          <Icon name="CornerDownLeft" className="size-3.5" aria-hidden="true" />
+        </button>
+      ) : null}
+    </form>
   );
 }
 
@@ -461,9 +545,8 @@ function DecisionChips({
       aria-label="Picked answers"
       className="flex flex-wrap gap-1.5 border-t border-border px-3 py-2"
     >
-      {entries.map(([decisionIndex, optionIndex]) => {
-        const label =
-          set.decisions[decisionIndex]?.options[optionIndex]?.label ?? "";
+      {entries.map(([decisionIndex, pick]) => {
+        const label = decisionPickLabel(set.decisions[decisionIndex], pick);
         return (
           <li
             key={decisionIndex}
