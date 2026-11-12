@@ -27,7 +27,15 @@ The fork carries no fork database migrations. The decisions feature lives in `pl
 
 ## History reset (2026-11)
 
-The fork starts again from upstream main. Ethereal-Titan needs a one-time checkout transition before the next update. Transition instructions follow separately.
+On 2026-11-12 the fork started again from upstream main 030b1b729f. The decision cards moved from core into the `bb--decisions` plugin. The old history is on `backup/decisions-in-core` (3f6369763e).
+
+The `bb updates app` updater accepts only fast-forwards of `origin/main`. After a history reset, run this one time on Ethereal-Titan before the next update:
+
+```sh
+cd ~/dev/forks/bb && git fetch origin && git reset --hard origin/main
+```
+
+The old `thread_decisions` table stays in the database. Nothing reads it.
 
 ## Deploy the fork
 
