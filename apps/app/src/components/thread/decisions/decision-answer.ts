@@ -1,7 +1,19 @@
-import { composeThreadDecisionAnswer } from "@bb/core-ui";
+import {
+  composeThreadDecisionAnswer,
+  type ThreadDecisionAnswerPick,
+} from "@bb/core-ui";
 import type { PromptInput, ThreadDecision } from "@bb/domain";
 
-export type DecisionPicks = ReadonlyMap<number, number>;
+export type DecisionPick = { optionIndex: number } | { text: string };
+export type DecisionPicks = ReadonlyMap<number, DecisionPick>;
+
+export function decisionPickLabel(
+  decision: ThreadDecision | undefined,
+  pick: DecisionPick,
+): string {
+  if ("text" in pick) return pick.text;
+  return decision?.options[pick.optionIndex]?.label ?? "";
+}
 
 export function withDecisionAnswer(
   input: readonly PromptInput[],
@@ -9,10 +21,12 @@ export function withDecisionAnswer(
   picks: DecisionPicks,
 ): PromptInput[] {
   if (picks.size === 0) return [...input];
-  const pickList = [...picks].map(([decisionIndex, optionIndex]) => ({
-    decisionIndex,
-    optionIndex,
-  }));
+  const pickList = [...picks].map(
+    ([decisionIndex, pick]): ThreadDecisionAnswerPick => ({
+      decisionIndex,
+      ...pick,
+    }),
+  );
   const [first, ...rest] = input;
   if (first?.type === "text") {
     const freeText = first.text.trim();

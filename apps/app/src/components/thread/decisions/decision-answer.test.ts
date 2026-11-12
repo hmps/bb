@@ -31,7 +31,11 @@ describe("withDecisionAnswer", () => {
         ],
       },
     ];
-    const [first] = withDecisionAnswer(input, decisions, new Map([[0, 1]]));
+    const [first] = withDecisionAnswer(
+      input,
+      decisions,
+      new Map([[0, { optionIndex: 1 }]]),
+    );
     if (first?.type !== "text") throw new Error("expected text input");
     expect(first.text).toBe(
       "Decision 1 — Ship behind a flag?: Ship to all\nask @thr",
@@ -43,7 +47,9 @@ describe("withDecisionAnswer", () => {
   });
 
   it("adds a text part when the composer is empty", () => {
-    expect(withDecisionAnswer([], decisions, new Map([[0, 0]]))).toEqual([
+    expect(
+      withDecisionAnswer([], decisions, new Map([[0, { optionIndex: 0 }]])),
+    ).toEqual([
       {
         type: "text",
         text: "Decision 1 — Ship behind a flag?: Flag it",

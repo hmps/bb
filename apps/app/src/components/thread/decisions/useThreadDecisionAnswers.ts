@@ -2,14 +2,18 @@ import { useCallback, useMemo, useState } from "react";
 import type { PromptInput, ThreadDecisionSet } from "@bb/domain";
 import { useSystemConfig } from "@/hooks/queries/system-queries";
 import { useThreadDecisions } from "@/hooks/queries/thread-decisions";
-import { withDecisionAnswer, type DecisionPicks } from "./decision-answer";
+import {
+  withDecisionAnswer,
+  type DecisionPick,
+  type DecisionPicks,
+} from "./decision-answer";
 
 const NO_PICKS: DecisionPicks = new Map();
 
 export interface ThreadDecisionAnswers {
   openSet: ThreadDecisionSet | null;
   picks: DecisionPicks;
-  pick: (decisionIndex: number, optionIndex: number) => void;
+  pick: (decisionIndex: number, pick: DecisionPick) => void;
   unpick: (decisionIndex: number) => void;
   clear: () => void;
   applyTo: (input: readonly PromptInput[]) => PromptInput[];
@@ -31,12 +35,12 @@ export function useThreadDecisionAnswers(
   const picks = state.setId === openSetId ? state.picks : NO_PICKS;
 
   const pick = useCallback(
-    (decisionIndex: number, optionIndex: number) => {
+    (decisionIndex: number, pick: DecisionPick) => {
       setState((current) => {
         const next = new Map(
           current.setId === openSetId ? current.picks : NO_PICKS,
         );
-        next.set(decisionIndex, optionIndex);
+        next.set(decisionIndex, pick);
         return { setId: openSetId, picks: next };
       });
     },

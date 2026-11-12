@@ -783,7 +783,7 @@ describe("ThreadDetailPromptArea", () => {
         links: [],
       },
     ];
-    const picks = new Map([[0, 1]]);
+    const picks = new Map([[0, { optionIndex: 1 }]]);
     const clear = vi.fn();
     mocks.decisionAnswers = {
       openSet: {
