@@ -171,6 +171,11 @@ export const BUILTIN_PLUGINS = [
     defaultEnabled: true,
   },
   {
+    name: "decisions",
+    pluginId: "bb--decisions",
+    defaultEnabled: true,
+  },
+  {
     name: "github-pr-status",
     pluginId: "bb--github-pr-status",
     defaultEnabled: true,

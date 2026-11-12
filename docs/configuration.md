@@ -1404,6 +1404,20 @@ bb plugin config ask-user-question set questionTimeout "24 hours"
 The setting applies to questions asked after it changes. A server restart still
 closes every open card.
 
+### Decisions plugin
+
+The builtin Decisions plugin keeps an unanswered decision card open for 7 days
+by default. When it expires, the agent receives a timeout result and the card
+closes. Choose `1 hour`, `4 hours`, `8 hours`, `24 hours`, `3 days`, or `7 days`
+under the plugin settings, or configure it from the CLI:
+
+```bash
+bb plugin config bb--decisions set decisionTimeout "24 hours"
+```
+
+The setting applies to decisions asked after it changes. A server restart still
+closes every open card.
+
 ### Provider retry plugin
 
 The builtin Provider retry plugin is enabled on fresh installations. It queues

@@ -118,6 +118,7 @@
     "bb-plugin-ask-user-question": "workspace:*",
     "bb-plugin-automations": "workspace:*",
     "bb-plugin-bb--composer": "workspace:*",
+    "bb-plugin-bb--decisions": "workspace:*",
     "bb-plugin-bb--git": "workspace:*",
     "bb-plugin-bb--github-pr-status": "workspace:*",
     "bb-plugin-bb-guide": "workspace:*",

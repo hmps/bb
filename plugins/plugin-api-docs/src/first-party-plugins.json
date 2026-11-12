@@ -60,6 +60,11 @@
     "icon": "Github"
   },
   {
+    "id": "bb--decisions",
+    "name": "Decisions",
+    "icon": "ListTodo"
+  },
+  {
     "id": "bb--git",
     "name": "Git",
     "icon": "GitBranch"
