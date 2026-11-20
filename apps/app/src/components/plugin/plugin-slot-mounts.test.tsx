@@ -8,8 +8,10 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
+import { useAppNavigationHostRef } from "@/lib/app-navigation-host";
 import {
   startTransition,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -36,7 +38,7 @@ import { createPluginPanelFixedPanelTab } from "@/lib/fixed-panel-tabs-state";
 import {
   resetPluginSlotStoreForTest,
   setPluginSlotRegistrations,
-  usePluginSlots,
+  usePluginSlotKind,
   type PluginNavPanelSlot,
 } from "@/lib/plugin-slots";
 import { PLUGIN_PANEL_ROUTE_PATH } from "@/lib/route-paths";
@@ -259,17 +261,17 @@ describe("useComposer", () => {
     function ComposerProbe() {
       const composer = useComposer();
       onRender?.(composer);
-      const initialMethods = useRef({
+      const [initialMethods] = useState(() => ({
         setText: composer.setText,
         updateText: composer.updateText,
         clear: composer.clear,
         setTextEffect: composer.setTextEffect,
-      });
+      }));
       const methodsAreStable =
-        initialMethods.current.setText === composer.setText &&
-        initialMethods.current.updateText === composer.updateText &&
-        initialMethods.current.clear === composer.clear &&
-        initialMethods.current.setTextEffect === composer.setTextEffect;
+        initialMethods.setText === composer.setText &&
+        initialMethods.updateText === composer.updateText &&
+        initialMethods.clear === composer.clear &&
+        initialMethods.setTextEffect === composer.setTextEffect;
       return (
         <div>
           <div>scope: {composer.scope.kind}</div>
@@ -716,7 +718,9 @@ describe("useComposer", () => {
         ],
       });
       const draftRef = useRef(draft);
-      draftRef.current = draft;
+      useInsertionEffect(() => {
+        draftRef.current = draft;
+      });
       const subscribeDraft = useComposerHostDraftNotifier(draft);
       const host = useMemo<PluginComposerHost>(
         () => ({
@@ -930,7 +934,9 @@ describe("useComposer", () => {
         ],
       });
       const draftRef = useRef(draft);
-      draftRef.current = draft;
+      useInsertionEffect(() => {
+        draftRef.current = draft;
+      });
       const subscribeDraft = useComposerHostDraftNotifier(draft);
       const host = useMemo<PluginComposerHost>(
         () => ({
@@ -1959,13 +1965,13 @@ describe("plugin thread panel actions", () => {
     );
   }
 
-  function usePanelFor(
+  function useHostFor(
     actions: readonly Parameters<
       typeof createPanelActionDestination
     >[0]["action"][],
     openPluginPanel: (args: OpenPluginPanelArgs) => void,
   ) {
-    return useMemo(
+    const panel = useMemo(
       () =>
         createAppPanelController(() => ({
           activeTabId: null,
@@ -1976,6 +1982,11 @@ describe("plugin thread panel actions", () => {
         })),
       [actions, openPluginPanel],
     );
+    const hostRef = useAppNavigationHostRef();
+    useLayoutEffect(() => {
+      hostRef.current = { ...hostRef.current, panel };
+    });
+    return hostRef;
   }
 
   function ActionsProbe({
@@ -1987,7 +1998,7 @@ describe("plugin thread panel actions", () => {
   }) {
     const { actions } = useThreadFixedTabs({ threadId, environmentId: null });
     const entries = usePluginPanelActions({
-      panel: usePanelFor(actions, openPluginPanel),
+      hostRef: useHostFor(actions, openPluginPanel),
       threadId,
       environmentId: null,
       actions,
@@ -2012,8 +2023,8 @@ describe("plugin thread panel actions", () => {
             id: "issue",
             title: "Issue",
             component: PanelProbe,
-            run: ({ threadId, experimental_panel }) => {
-              experimental_panel.openTab({
+            run: ({ threadId, panel }) => {
+              panel.openTab({
                 tab: {
                   id: "issue",
                   context: { kind: "thread" },
@@ -2081,9 +2092,9 @@ describe("plugin thread panel actions", () => {
             id: "cyclic",
             title: "Cyclic",
             component: PanelProbe,
-            run: ({ experimental_panel }) => {
+            run: ({ panel }) => {
               declines.push(
-                experimental_panel.openTab({
+                panel.openTab({
                   tab: {
                     id: "cyclic",
                     context: { kind: "thread" },
@@ -2098,9 +2109,9 @@ describe("plugin thread panel actions", () => {
             id: "coerced",
             title: "Coerced",
             component: PanelProbe,
-            run: ({ experimental_panel }) => {
+            run: ({ panel }) => {
               declines.push(
-                experimental_panel.openTab({
+                panel.openTab({
                   tab: {
                     id: "coerced",
                     context: { kind: "thread" },
@@ -2139,7 +2150,7 @@ describe("plugin thread panel actions", () => {
             component: PanelProbe,
             run: (context) => {
               accepted.push(
-                context.experimental_panel.openTab({
+                context.panel.openTab({
                   tab: {
                     id: "issue",
                     context: { kind: "thread" },
@@ -2161,7 +2172,7 @@ describe("plugin thread panel actions", () => {
             component: NewThreadPanelProbe,
             run: (context) => {
               accepted.push(
-                context.experimental_panel.openTab({
+                context.panel.openTab({
                   tab: {
                     id: "setup",
                     context: { kind: "thread" },
@@ -2188,15 +2199,15 @@ describe("plugin thread panel actions", () => {
         threadId: "thr_one",
         environmentId: null,
       });
-      const { newThreadPanelActions } = usePluginSlots();
+      const newThreadPanelActions = usePluginSlotKind("newThreadPanelActions");
       const threadEntries = usePluginPanelActions({
         actions,
-        panel: usePanelFor(actions, recordOpen),
+        hostRef: useHostFor(actions, recordOpen),
         threadId: "thr_9",
         environmentId: null,
       });
       const rootEntries = usePluginNewThreadPanelActions({
-        panel: usePanelFor(newThreadPanelActions, recordOpen),
+        hostRef: useHostFor(newThreadPanelActions, recordOpen),
         projectId: "proj_1",
       });
       return (
@@ -2249,8 +2260,8 @@ describe("plugin thread panel actions", () => {
             title: "Set up thread",
             icon: "Wand",
             component: NewThreadPanelProbe,
-            run: ({ projectId, experimental_panel }) => {
-              experimental_panel.openTab({
+            run: ({ projectId, panel }) => {
+              panel.openTab({
                 tab: {
                   id: "setup",
                   context: { kind: "thread" },
@@ -2269,9 +2280,9 @@ describe("plugin thread panel actions", () => {
       const [tab, setTab] = useState<ReturnType<
         typeof createPluginPanelFixedPanelTab
       > | null>(null);
-      const { newThreadPanelActions } = usePluginSlots();
+      const newThreadPanelActions = usePluginSlotKind("newThreadPanelActions");
       const entries = usePluginNewThreadPanelActions({
-        panel: usePanelFor(newThreadPanelActions, (args) =>
+        hostRef: useHostFor(newThreadPanelActions, (args) =>
           setTab(createPluginPanelFixedPanelTab(args)),
         ),
         projectId: "proj_1",

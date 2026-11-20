@@ -1,7 +1,7 @@
 import { coreTabs } from "@/components/secondary-panel/thread-info-registration";
 import { coreMessageMetadata } from "@/components/thread/timeline/core-message-metadata";
 import { setAppIcons } from "@bb/shared-ui/icon-registry";
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import type {
   ExperimentalTabRegistration,
   ComposerCustomization,
@@ -15,7 +15,6 @@ import type {
   PluginPendingInteractionRegistration,
   PluginFileOpenerRegistration,
   PluginHomepageSectionRegistration,
-  PluginMessageActionRegistration,
   ExperimentalMessageMetadataRegistration,
   PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
@@ -31,7 +30,6 @@ import type {
   ExperimentalThreadHeaderRowRegistration,
   ExperimentalThreadHeaderTitleRegistration,
   ExperimentalThreadContextCardRowRegistration,
-  ExperimentalThreadContextCardSectionRegistration,
   PluginThreadActionRegistration,
   ExperimentalPluginBrowserToolbarActionRegistration,
   PluginThreadListRegistration,
@@ -39,6 +37,7 @@ import type {
 } from "@get-bb/plugin-sdk";
 import {
   type CollectedPluginCommandRegistration,
+  type CollectedPluginMessageActionRegistration,
   type LegacyThreadPanelActionRegistration,
   type LegacyThreadHeaderActionRegistration,
   type LegacyNavPanelRegistration,
@@ -49,6 +48,7 @@ import {
   type CollectedManagedSidebarFooterItem,
   type CollectedSidebarFooterItem,
   type CollectedSidebarNavigationRegistration,
+  type CollectedThreadContextCardSectionRegistration,
 } from "@get-bb/plugin-sdk/internal/plugin-app-collector";
 
 export interface PluginRegistrationSet {
@@ -74,7 +74,7 @@ export interface PluginRegistrationSet {
   threadHeaderRows?: readonly ExperimentalThreadHeaderRowRegistration[];
   threadHeaderTitles?: readonly ExperimentalThreadHeaderTitleRegistration[];
   threadContextCardRows?: readonly ExperimentalThreadContextCardRowRegistration[];
-  threadContextCardSections?: readonly ExperimentalThreadContextCardSectionRegistration[];
+  threadContextCardSections?: readonly CollectedThreadContextCardSectionRegistration[];
   threadActions?: readonly PluginThreadActionRegistration<unknown>[];
   browserToolbarActions?: readonly ExperimentalPluginBrowserToolbarActionRegistration[];
   fileOpeners: readonly PluginFileOpenerRegistration[];
@@ -83,7 +83,7 @@ export interface PluginRegistrationSet {
   composers?: readonly ExperimentalComposerRegistration[];
   messageDirectives: readonly PluginMessageDirectiveRegistration[];
   codeFenceRenderers?: readonly ExperimentalCodeFenceRendererRegistration[];
-  messageActions?: readonly PluginMessageActionRegistration[];
+  messageActions?: readonly CollectedPluginMessageActionRegistration[];
   messageMetadata?: readonly ExperimentalMessageMetadataRegistration[];
   commandPaletteActions?: readonly CollectedPluginCommandRegistration[];
   providerIcons?: readonly CollectedPluginProviderIconRegistration[];
@@ -159,7 +159,7 @@ export interface PluginThreadHeaderTitleSlot
 export interface PluginThreadContextCardRowSlot
   extends ExperimentalThreadContextCardRowRegistration, PluginSlotBase {}
 export interface PluginThreadContextCardSectionSlot
-  extends ExperimentalThreadContextCardSectionRegistration, PluginSlotBase {}
+  extends CollectedThreadContextCardSectionRegistration, PluginSlotBase {}
 export interface PluginThreadActionSlot
   extends PluginThreadActionRegistration<unknown>, PluginSlotBase {}
 export interface PluginBrowserToolbarActionSlot
@@ -176,8 +176,8 @@ export interface PluginMessageDirectiveSlot
   extends PluginMessageDirectiveRegistration, PluginSlotBase {}
 export interface PluginCodeFenceRendererSlot
   extends ExperimentalCodeFenceRendererRegistration, PluginSlotBase {}
-export interface PluginMessageActionSlot
-  extends PluginMessageActionRegistration, PluginSlotBase {}
+export type PluginMessageActionSlot = CollectedPluginMessageActionRegistration &
+  PluginSlotBase;
 export interface PluginMessageMetadataSlot
   extends ExperimentalMessageMetadataRegistration, PluginSlotBase {}
 export type PluginCommandPaletteActionSlot =
@@ -279,7 +279,8 @@ const generationByPluginId = new Map<string, number>();
 const listeners = new Set<() => void>();
 let snapshot: PluginSlotSnapshot = EMPTY_PLUGIN_SLOT_SNAPSHOT;
 
-type SlotKind = keyof PluginSlotSnapshot;
+export type PluginSlotKind = keyof PluginSlotSnapshot;
+type SlotKind = PluginSlotKind;
 
 const SLOT_KINDS: readonly SlotKind[] = [
   "homepageSections",
@@ -633,6 +634,13 @@ export function getPluginSlotSnapshot(): PluginSlotSnapshot {
 
 export function usePluginSlots(): PluginSlotSnapshot {
   return useSyncExternalStore(subscribePluginSlots, getPluginSlotSnapshot);
+}
+
+export function usePluginSlotKind<K extends PluginSlotKind>(
+  kind: K,
+): PluginSlotSnapshot[K] {
+  const getKind = useCallback(() => getPluginSlotSnapshot()[kind], [kind]);
+  return useSyncExternalStore(subscribePluginSlots, getKind, getKind);
 }
 
 export function usePluginFrontendRegistered(pluginId: string): boolean {

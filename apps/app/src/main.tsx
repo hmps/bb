@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
+import { PluginActionContextProvider } from "./lib/plugin-action-context-provider";
 import { App } from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { ApplicationUrlDialog } from "./components/ApplicationUrlDialog";
@@ -12,6 +13,7 @@ import { initializeFavicon } from "./lib/favicon-color-preference";
 import { installForeignDomMutationGuard } from "./lib/foreign-dom-mutation-guard";
 import { installAppQueryClientBrowserEvents } from "./lib/query-client";
 import { appQueryClient } from "./lib/app-query-client";
+import { seedPluginListFromAppShell } from "./lib/app-shell-plugin-list";
 import { applyAppFrameGeometry, getBbDesktopInfo } from "./lib/bb-desktop";
 import { applyCachedAppThemeCss } from "./lib/themes";
 import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
@@ -25,6 +27,7 @@ Error.stackTraceLimit = 50;
 
 installAppQueryClientBrowserEvents(appQueryClient);
 registerProviderCliInstallQueryClient(appQueryClient);
+seedPluginListFromAppShell(appQueryClient, document, performance.timeOrigin);
 
 initializePreferredTheme();
 applyCachedAppThemeCss();
@@ -47,7 +50,9 @@ createRoot(document.getElementById("root")!, {
     <AppErrorBoundary>
       <QueryClientProvider client={appQueryClient}>
         <BrowserRouter>
-          <App />
+          <PluginActionContextProvider>
+            <App />
+          </PluginActionContextProvider>
           <AppToaster />
           <ApplicationUrlDialog />
         </BrowserRouter>

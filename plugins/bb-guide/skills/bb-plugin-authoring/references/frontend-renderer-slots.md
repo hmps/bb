@@ -210,29 +210,34 @@ message, Original }` — render fenced code blocks of chosen languages in
   public contract and examples.
 - `messageAction` → an action on chat messages: an icon button in the
   per-message action bar (user and assistant messages) and an entry in the
-  assistant-message text-selection menu. Slot actions are limited to the main
-  timeline; embedded `ThreadChat` suppresses them on both surfaces. Host-rendered chrome, no plugin
-  component — registration: `{ id, title, icon?, run }`. Activating it calls
-  `run(context)` with `{ threadId, message, selectedText?, experimental_panel, composer }`:
+  assistant-message text-selection menu, in bb's thread view and in embedded
+  `ThreadChat`. `experimental_surfaces` limits it to `"thread-view"` and/or
+  `"embedded-chat"` (omitted = both); an empty or unknown list fails
+  registration. Host-rendered chrome, no plugin
+  component — registration: `{ id, title, icon?, experimental_surfaces?, run }`. Activating it calls
+  `run(context)` with `{ threadId, message, selectedText?, composer }` plus the
+  [callback context](frontend-hooks-and-ui.md#callback-context)
+  `{ sdk, navigate, panel }`:
   `message` is a narrow stable reference
   `{ id, threadId, role: "user" | "assistant", text, sourceSeqEnd, experimental_messageSeq }` (never
   an internal timeline row); `experimental_messageSeq` is the recorded message
   sequence used by `?msg=`, `sdk.threads.message`, and `bb thread log --message`,
   while `sourceSeqEnd` anchors provider-history forks; `selectedText` is present only for
   selection-menu invocations and holds the exact highlighted text; and
-  `experimental_panel` is the thread view's
-  [panel controller](frontend-hooks-and-ui.md#panel-controller). Errors from `run` (sync or
+  `navigate` and `panel` act on that thread view (terminals,
+  files and URLs open in its side panel). Errors from `run` (sync or
   async) are contained and
   logged, never breaking the timeline.
 - `app.commands.register` → a row in bb's quick palette (Mod+Shift+P), listed
   under "Plugins" beside bb's own commands. Host-rendered chrome, no plugin
   component — registration: `{ id, title, defaultShortcut?, isAvailable?, run }`. Both callbacks
-  receive `{ threadId, projectId, experimental_panel }`, where `threadId` and
-  `projectId` are null on surfaces without one and `experimental_panel` is the
-  focused surface's [panel controller](frontend-hooks-and-ui.md#panel-controller). `isAvailable` is called for palette listing and keyboard invocation — keep
+  receive `{ threadId, projectId }` plus the
+  [callback context](frontend-hooks-and-ui.md#callback-context), where
+  `threadId` and `projectId` are null on surfaces without one, and
+  `navigate` and `panel` act on the focused surface. `isAvailable` is called for palette listing and keyboard invocation — keep
   it cheap and synchronous — and hides the row when it returns false; a row
   that needs a thread should use it, because the palette opens anywhere and
-  `experimental_panel` declines (returning false) when the focused surface has
+  `panel` declines (returning false) when the focused surface has
   no such tab.
   Errors from either callback are contained and logged, never breaking the
   palette. Write self-identifying titles ("Linear: open issue for this
@@ -250,6 +255,11 @@ message, Original }` — render fenced code blocks of chosen languages in
   `plugin:<plugin-id>/<command-id>`. Keyboard invocation uses the same current
   context and error handling as the palette and is suppressed while a modal
   is open. Shortcuts run only while the plugin frontend is active.
+  Registered shortcuts match by physical key when the active layout types a
+  non-Latin character (Cyrillic, Greek, Hebrew, Arabic), and by the typed
+  character on Latin layouts such as Dvorak. A plugin that handles keys
+  itself compares them the same way with
+  `experimental_matchesShortcutKey(event, key)` and checks modifiers itself.
   A command that acts on the composer the user is typing in registers through
   `app.composer.experimental_registerCommand` instead; see the composer
   section of frontend-hooks-and-ui.

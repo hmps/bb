@@ -1,3 +1,4 @@
+import { unavailablePluginActionContext } from "@/lib/plugin-action-context-provider";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ExperimentalSidebarFooterDisclosureController,
@@ -401,7 +402,10 @@ describe("collectPluginAppRegistrations — experimental_sidebarFooter", () => {
     expect(compatibilityItem?.kind).toBe("action");
     if (compatibilityItem?.kind !== "action")
       throw new Error("expected action");
-    await compatibilityItem.onActivate({ openPluginDetails });
+    await compatibilityItem.onActivate({
+      ...unavailablePluginActionContext("legacy-plugin"),
+      openPluginDetails,
+    });
     expect(legacyRun).toHaveBeenCalledOnce();
     expect(openPluginDetails).toHaveBeenCalledOnce();
 
@@ -805,7 +809,13 @@ describe("collectPluginAppRegistrations", () => {
       { id: "inline-vis", component: Component },
     ]);
     expect(registrations.messageActions).toEqual([
-      { id: "summarize", title: "Summarize", icon: "Zap", run },
+      {
+        id: "summarize",
+        title: "Summarize",
+        icon: "Zap",
+        experimental_surfaces: ["thread-view", "embedded-chat"],
+        run,
+      },
     ]);
     expect(registrations.composerCustomizations).toEqual([
       {

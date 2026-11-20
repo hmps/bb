@@ -111,66 +111,6 @@ export type HostDaemonConnectShares = z.infer<
   typeof hostDaemonConnectSharesSchema
 >;
 
-const hostDaemonConnectNextServerSchema = z
-  .object({
-    protocol: z.enum(["wss", "websocket"]),
-    host: z.string().min(1).max(253),
-    port: z.number().int().min(1).max(65535),
-  })
-  .strict();
-
-export const hostDaemonConnectNextConfigSchema = z
-  .object({
-    domain: z.string().min(1).max(253),
-    server: hostDaemonConnectNextServerSchema,
-  })
-  .strict();
-export type HostDaemonConnectNextConfig = z.infer<
-  typeof hostDaemonConnectNextConfigSchema
->;
-
-const hostDaemonConnectNextSchema = z
-  .object({
-    generation: z.number().int().nonnegative(),
-    config: hostDaemonConnectNextConfigSchema.nullable(),
-  })
-  .strict();
-export type HostDaemonConnectNext = z.infer<typeof hostDaemonConnectNextSchema>;
-
-export const hostDaemonConnectNextStateSchema = z.enum([
-  "idle",
-  "connecting",
-  "connected",
-  "refused",
-  "offline",
-  "error",
-]);
-export type HostDaemonConnectNextState = z.infer<
-  typeof hostDaemonConnectNextStateSchema
->;
-
-export const hostDaemonConnectNextStatusSchema = z
-  .object({
-    state: hostDaemonConnectNextStateSchema,
-    label: z.string().min(1).nullable(),
-    lastError: z.string().max(2000).nullable(),
-    nextRetryAt: z.number().int().nonnegative().nullable(),
-    since: z.number().int().nonnegative(),
-    shares: z.array(
-      z
-        .object({
-          port: z.number().int().min(1).max(65535),
-          state: z.enum(["pending", "active", "refused"]),
-          error: z.string().max(2000).nullable(),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
-export type HostDaemonConnectNextStatus = z.infer<
-  typeof hostDaemonConnectNextStatusSchema
->;
-
 const hostDaemonPluginHostGenerationSchema = z
   .object({
     pluginId: z.string().min(1),
@@ -188,6 +128,7 @@ export const hostDaemonSessionOpenRequestSchema = z
     dataDir: z.string().min(1),
     localApiPort: z.number().int().min(1).max(65_535).nullable().default(null),
     protocolVersion: z.number().int().positive(),
+    turnCommandThreadIds: z.array(z.string().min(1)).default([]),
     activeThreads: z.array(hostDaemonActiveThreadSchema),
     openThreadWork: z.array(hostDaemonOpenThreadWorkSchema),
     undeliveredEventThreadIds: z.array(z.string().min(1)).default([]),
@@ -251,6 +192,7 @@ export const hostDaemonSessionOpenResponseSchema = z
     agentCpuPriority: z.boolean(),
     heartbeatIntervalMs: z.number().int().positive(),
     leaseTimeoutMs: z.number().int().positive(),
+    reconnectGraceMs: z.number().int().nonnegative(),
     watchSet: hostDaemonWatchSetSchema.default({
       generation: 0,
       workspaceTargets: [],
@@ -259,10 +201,6 @@ export const hostDaemonSessionOpenResponseSchema = z
     connectShares: hostDaemonConnectSharesSchema.default({
       generation: 0,
       ports: [],
-    }),
-    connectNext: hostDaemonConnectNextSchema.default({
-      generation: 0,
-      config: null,
     }),
     pluginHostGenerations: z
       .array(hostDaemonPluginHostGenerationSchema)
@@ -462,15 +400,6 @@ const hostDaemonConnectSharesReplaceMessageSchema =
     .strict();
 export type HostDaemonConnectSharesReplaceMessage = z.infer<
   typeof hostDaemonConnectSharesReplaceMessageSchema
->;
-
-const hostDaemonConnectNextReplaceMessageSchema = hostDaemonConnectNextSchema
-  .extend({
-    type: z.literal("connect-next.replace"),
-  })
-  .strict();
-export type HostDaemonConnectNextReplaceMessage = z.infer<
-  typeof hostDaemonConnectNextReplaceMessageSchema
 >;
 
 const hostDaemonOnlineRpcResponseSuccessBaseSchema = z
@@ -761,7 +690,6 @@ export const hostDaemonServerWsMessageSchema = z.discriminatedUnion("type", [
   hostDaemonOnlineRpcCancelMessageSchema,
   hostDaemonWatchSetReplaceMessageSchema,
   hostDaemonConnectSharesReplaceMessageSchema,
-  hostDaemonConnectNextReplaceMessageSchema,
   hostDaemonTerminalOpenMessageSchema,
   hostDaemonTerminalAttachMessageSchema,
   hostDaemonTerminalInputMessageSchema,
@@ -814,16 +742,6 @@ const hostDaemonConnectTunnelIdentityMessageSchema = z
   })
   .strict();
 
-const hostDaemonConnectNextStatusMessageSchema = z
-  .object({
-    type: z.literal("connect-next.status"),
-    status: hostDaemonConnectNextStatusSchema,
-  })
-  .strict();
-export type HostDaemonConnectNextStatusMessage = z.infer<
-  typeof hostDaemonConnectNextStatusMessageSchema
->;
-
 const pluginHostWorkerExitedMessageSchema = z
   .object({
     type: z.literal("plugin-host.worker-exited"),
@@ -839,8 +757,11 @@ export const environmentHookProgressMessageSchema = z
     entry: z
       .object({
         type: z.enum(["step", "output"]),
+        key: z.string().min(1),
         text: z.string(),
         status: z.enum(["started", "completed", "failed"]).nullable(),
+        startedAt: z.number().nullable(),
+        metadata: z.record(z.string(), z.unknown()).nullable(),
       })
       .strict(),
   })
@@ -919,7 +840,6 @@ export const hostDaemonDaemonWsMessageSchema = z.union([
   hostDaemonThreadStorageChangeMessageSchema,
   hostDaemonEnvironmentMetadataChangeMessageSchema,
   hostDaemonConnectTunnelIdentityMessageSchema,
-  hostDaemonConnectNextStatusMessageSchema,
   pluginHostWorkerExitedMessageSchema,
   pluginHostSignalMessageSchema,
   environmentHookProgressMessageSchema,
@@ -1003,6 +923,23 @@ export const hostDaemonInteractiveInterruptResponseSchema = z.object({
 });
 export type HostDaemonInteractiveInterruptResponse = z.infer<
   typeof hostDaemonInteractiveInterruptResponseSchema
+>;
+
+export const hostDaemonInteractiveWithdrawRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  request: hostDaemonInteractiveRequestKeySchema,
+  reason: z.string().min(1),
+});
+export type HostDaemonInteractiveWithdrawRequest = z.infer<
+  typeof hostDaemonInteractiveWithdrawRequestSchema
+>;
+
+export const hostDaemonInteractiveWithdrawResponseSchema = z.object({
+  ok: z.literal(true),
+  interactionId: z.string().min(1).nullable(),
+});
+export type HostDaemonInteractiveWithdrawResponse = z.infer<
+  typeof hostDaemonInteractiveWithdrawResponseSchema
 >;
 
 const sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -1101,6 +1038,12 @@ export type HostDaemonInternalSchema = {
     $post: Endpoint<
       { json: HostDaemonInteractiveInterruptRequest },
       HostDaemonInteractiveInterruptResponse
+    >;
+  };
+  "/session/interactive-request/withdraw": {
+    $post: Endpoint<
+      { json: HostDaemonInteractiveWithdrawRequest },
+      HostDaemonInteractiveWithdrawResponse
     >;
   };
 };

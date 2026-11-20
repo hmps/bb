@@ -63,6 +63,14 @@ export function listQueuedCommands(
     .map((queued) => hostDaemonRpcCommandSchema.parse(queued.command));
 }
 
+export function listPendingQueuedCommandsForHost(
+  hostId: string,
+): QueuedCommand[] {
+  return pendingHostRpcRequests.filter(
+    (queued) => queued.row.hostId === hostId,
+  );
+}
+
 export function listQueuedThreadCommands(
   harness: TestAppHarness,
   type: HostDaemonCommand["type"],
@@ -229,6 +237,7 @@ function buildDefaultGitSourceInspectionResult(): HostDaemonOnlineRpcResult<"hos
     hasUncommittedChanges: false,
     operation: { kind: "none" },
     originDefaultBranch: "origin/main",
+    defaultWorktreeBaseBranch: "origin/main",
   };
 }
 

@@ -63,6 +63,7 @@ export {
   extractThreadSessionOptions,
 } from "./provider-state-extraction.js";
 export { extractThreadTimelineModelFallback } from "./model-fallback-extraction.js";
+export { threadEventJoinsRunningTurn } from "./running-turn-thread-events.js";
 export { extractThreadTimelinePendingTodos } from "./todo-snapshot-extraction.js";
 export type { AcceptedClientRequestContext } from "./accepted-client-request-context.js";
 export {
@@ -91,8 +92,3 @@ export {
 export type { EventProjection } from "./event-projection.js";
 
 export { extractThreadContextWindowUsage } from "./thread-context-window-usage.js";
-export {
-  isExternalUserBoundaryForTurn,
-  type ExternalUserBoundaryMessage,
-  type ExternalUserBoundaryTurnSpan,
-} from "./external-user-boundaries.js";

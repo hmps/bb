@@ -22,6 +22,7 @@ import type {
   PluginCommandRegistration,
   ExperimentalComposerCommandRegistration,
   PluginMessageActionRegistration,
+  ExperimentalMessageActionSurface,
   ExperimentalMessageMetadataRegistration,
   PluginMessageDirectiveRegistration,
   PluginNavPanelRegistration,
@@ -250,6 +251,23 @@ function checkStaleNavPanelKeys(
   }
 }
 
+function readLegacyCardSectionTitle(
+  kind: string,
+  registration: ExperimentalThreadContextCardSectionRegistration,
+  onWarning: (message: string) => void,
+): string | null {
+  const title = "title" in registration ? registration.title : undefined;
+  if (typeof title !== "string" || title === "") return null;
+  onWarning(
+    `${kind}: "title" is retired; render experimental_InfoSection from the component instead.`,
+  );
+  return title;
+}
+
+export interface CollectedThreadContextCardSectionRegistration extends ExperimentalThreadContextCardSectionRegistration {
+  legacyTitle: string | null;
+}
+
 export type CollectedPluginProviderIconRegistration = Omit<
   PluginProviderIconRegistration,
   "providerKind"
@@ -308,6 +326,41 @@ export type CollectedPluginCommandRegistration =
       defaultShortcut: CollectedCommandShortcut;
     });
 
+export type CollectedPluginMessageActionRegistration = Omit<
+  PluginMessageActionRegistration,
+  "experimental_surfaces"
+> & {
+  experimental_surfaces: readonly ExperimentalMessageActionSurface[];
+};
+
+const MESSAGE_ACTION_SURFACES: readonly ExperimentalMessageActionSurface[] = [
+  "thread-view",
+  "embedded-chat",
+];
+
+function isMessageActionSurface(
+  value: unknown,
+): value is ExperimentalMessageActionSurface {
+  return value === "thread-view" || value === "embedded-chat";
+}
+
+function collectMessageActionSurfaces(
+  kind: string,
+  value: unknown,
+): readonly ExperimentalMessageActionSurface[] {
+  if (value === undefined) return MESSAGE_ACTION_SURFACES;
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every(isMessageActionSurface)
+  ) {
+    throw new Error(
+      `${kind}: "experimental_surfaces" must be a non-empty array of "thread-view" or "embedded-chat", got ${JSON.stringify(value)}`,
+    );
+  }
+  return MESSAGE_ACTION_SURFACES.filter((surface) => value.includes(surface));
+}
+
 export interface CollectedPluginAppRegistrations {
   homepageSections: PluginHomepageSectionRegistration[];
   settingsSections: PluginSettingsSectionRegistration[];
@@ -331,7 +384,7 @@ export interface CollectedPluginAppRegistrations {
   threadHeaderRows: ExperimentalThreadHeaderRowRegistration[];
   threadHeaderTitles: ExperimentalThreadHeaderTitleRegistration[];
   threadContextCardRows: ExperimentalThreadContextCardRowRegistration[];
-  threadContextCardSections: ExperimentalThreadContextCardSectionRegistration[];
+  threadContextCardSections: CollectedThreadContextCardSectionRegistration[];
   threadActions: PluginThreadActionRegistration<unknown>[];
   browserToolbarActions: ExperimentalPluginBrowserToolbarActionRegistration[];
   fileOpeners: PluginFileOpenerRegistration[];
@@ -340,7 +393,7 @@ export interface CollectedPluginAppRegistrations {
   composers: ExperimentalComposerRegistration[];
   messageDirectives: PluginMessageDirectiveRegistration[];
   codeFenceRenderers: ExperimentalCodeFenceRendererRegistration[];
-  messageActions: PluginMessageActionRegistration[];
+  messageActions: CollectedPluginMessageActionRegistration[];
   messageMetadata: ExperimentalMessageMetadataRegistration[];
   commandPaletteActions: CollectedPluginCommandRegistration[];
   providerIcons: CollectedPluginProviderIconRegistration[];
@@ -1086,10 +1139,14 @@ export function collectPluginAppRegistrations(
         requireUniqueId(kind, seenIds.threadContextCardSection, id);
         collected.threadContextCardSections.push({
           id,
-          title: requireNonEmptyString(kind, "title", registration.title),
           group: requireNonEmptyString(kind, "group", registration.group),
           ...requireOptionalOrder(kind, registration.order),
           component: requireComponent(kind, registration.component),
+          legacyTitle: readLegacyCardSectionTitle(
+            kind,
+            registration,
+            onWarning,
+          ),
         });
       },
       experimental_threadAction(registration) {
@@ -1260,6 +1317,10 @@ export function collectPluginAppRegistrations(
                 icon: requireNonEmptyString(kind, "icon", registration.icon),
               }
             : {}),
+          experimental_surfaces: collectMessageActionSurfaces(
+            kind,
+            registration.experimental_surfaces,
+          ),
           run: registration.run,
         });
       },

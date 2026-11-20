@@ -4,16 +4,15 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import type {
-  BbNavigate,
-  ExperimentalPanelController,
+  ExperimentalPluginActionContext,
   PluginBoundThreadAction,
-  PluginBrowserBbSdk,
   PluginThreadAction,
   PluginThreadActionEntry,
   PluginThreadActionPlacement,
@@ -23,14 +22,14 @@ import type {
   PluginThreadActionsOptions,
 } from "@get-bb/plugin-sdk";
 import { PluginContext } from "@/components/plugin/plugin-context";
-import { getFocusedAppPanelController } from "@/lib/app-fixed-tab-navigation";
 import {
-  createPluginPanelController,
-  createRetiredOpenPanel,
-} from "@/lib/plugin-panel-controller";
-import { useBbNavigate, useSdk } from "@/lib/plugin-navigation-hooks";
+  FocusedAppNavigationSurfaceProvider,
+  getFocusedAppNavigationSurface,
+  useAppNavigationHost,
+} from "@/lib/app-navigation-host";
+import { usePluginActionContextBinder } from "@/lib/plugin-navigation-hooks";
 import { compareGroupedPlacement } from "@/lib/grouped-placement";
-import { usePluginSlots } from "@/lib/plugin-slots";
+import { usePluginSlotKind } from "@/lib/plugin-slots";
 
 export const CORE_THREAD_ACTION_OWNER = "bb--core";
 
@@ -44,9 +43,7 @@ export interface ThreadActionRegistrationRecord {
 
 interface CollectedThreadAction {
   data: unknown;
-  sdk: PluginBrowserBbSdk;
-  navigate: BbNavigate;
-  panel: ExperimentalPanelController;
+  context: ExperimentalPluginActionContext;
 }
 
 interface ThreadActionRegistrySnapshot {
@@ -87,9 +84,7 @@ function publishCollected(key: string, value: CollectedThreadAction): void {
   if (
     current !== undefined &&
     Object.is(current.data, value.data) &&
-    current.sdk === value.sdk &&
-    current.navigate === value.navigate &&
-    current.panel === value.panel
+    current.context === value.context
   ) {
     return;
   }
@@ -239,31 +234,28 @@ function reportFailure(key: string, phase: string, error: unknown): void {
   console.error(`thread action "${key}" failed in ${phase}`, error);
 }
 
-function useLatestNavigate(
-  navigate: BbNavigate,
-  panel: ExperimentalPanelController,
-): BbNavigate {
-  const latest = useRef(navigate);
-  useLayoutEffect(() => {
-    latest.current = navigate;
-  });
-  const [stable] = useState<
-    BbNavigate & { openThreadPanel: ReturnType<typeof createRetiredOpenPanel> }
-  >(() => ({
-    toThread: (...args) => latest.current.toThread(...args),
-    toProject: (...args) => latest.current.toProject(...args),
-    toPluginPanel: (...args) => latest.current.toPluginPanel(...args),
-    toCompose: (...args) => latest.current.toCompose(...args),
-    openThreadPanel: createRetiredOpenPanel(panel),
-    openUrl: (...args) => latest.current.openUrl(...args),
-    experimental_openFilePreview: (...args) =>
-      latest.current.experimental_openFilePreview(...args),
-    experimental_openFileExternally: (...args) =>
-      latest.current.experimental_openFileExternally(...args),
-    experimental_openTerminal: (...args) =>
-      latest.current.experimental_openTerminal(...args),
-  }));
-  return stable;
+type ThreadActionUseData = PluginThreadActionRegistration<unknown>["useData"];
+
+interface ThreadActionDataHostProps {
+  record: ThreadActionRegistrationRecord;
+  threadIds: readonly string[];
+}
+
+function createThreadActionDataHost(useData: ThreadActionUseData) {
+  if (useData === undefined) {
+    return function ThreadActionDataHost({
+      record,
+    }: ThreadActionDataHostProps) {
+      return <ThreadActionPublisher record={record} data={undefined} />;
+    };
+  }
+  return function ThreadActionDataHost({
+    record,
+    threadIds,
+  }: ThreadActionDataHostProps) {
+    const data = useData({ threadIds });
+    return <ThreadActionPublisher record={record} data={data} />;
+  };
 }
 
 function ThreadActionCollector({
@@ -275,15 +267,34 @@ function ThreadActionCollector({
     subscribeThreadIds,
     getSubscribedThreadIds,
   )[record.placement];
-  const data = record.registration.useData?.({ threadIds });
-  const sdk = useSdk();
-  const [panel] = useState(() =>
-    createPluginPanelController(record.pluginId, getFocusedAppPanelController),
+  const useData = record.registration.useData;
+  const [dataHost, setDataHost] = useState(() => ({
+    useData,
+    Component: createThreadActionDataHost(useData),
+  }));
+  if (dataHost.useData !== useData) {
+    setDataHost({ useData, Component: createThreadActionDataHost(useData) });
+  }
+  const { Component } = dataHost;
+  return <Component record={record} threadIds={threadIds} />;
+}
+
+function ThreadActionPublisher({
+  record,
+  data,
+}: {
+  record: ThreadActionRegistrationRecord;
+  data: unknown;
+}) {
+  const bind = usePluginActionContextBinder();
+  const host = useAppNavigationHost();
+  const context = useMemo(
+    () => bind(record.pluginId, () => getFocusedAppNavigationSurface() ?? host),
+    [bind, host, record.pluginId],
   );
-  const navigate = useLatestNavigate(useBbNavigate(), panel);
   useLayoutEffect(() => {
-    publishCollected(record.key, { data, sdk, navigate, panel });
-  }, [data, navigate, panel, record.key, sdk]);
+    publishCollected(record.key, { data, context });
+  }, [context, data, record.key]);
   useLayoutEffect(() => () => dropCollected(record.key), [record.key]);
   return null;
 }
@@ -311,7 +322,7 @@ class ThreadActionCollectorBoundary extends Component<
 function useThreadActionRecords(
   coreRegistrations: readonly PluginThreadActionRegistration<unknown>[],
 ): readonly ThreadActionRegistrationRecord[] {
-  const slots = usePluginSlots().threadActions;
+  const slots = usePluginSlotKind("threadActions");
   const records = [
     ...coreRegistrations.map((registration) => ({
       key: `${CORE_THREAD_ACTION_OWNER}/${registration.id}`,
@@ -366,13 +377,20 @@ export function ThreadActionCollectors({
       setSnapshot({ ...snapshot, requestRename: requestRenameUnavailable });
     };
   }, []);
-  return records.map((record) => (
-    <PluginContext.Provider key={record.instanceKey} value={record.pluginId}>
-      <ThreadActionCollectorBoundary registrationKey={record.key}>
-        <ThreadActionCollector record={record} />
-      </ThreadActionCollectorBoundary>
-    </PluginContext.Provider>
-  ));
+  return (
+    <FocusedAppNavigationSurfaceProvider>
+      {records.map((record) => (
+        <PluginContext.Provider
+          key={record.instanceKey}
+          value={record.pluginId}
+        >
+          <ThreadActionCollectorBoundary registrationKey={record.key}>
+            <ThreadActionCollector record={record} />
+          </ThreadActionCollectorBoundary>
+        </PluginContext.Provider>
+      ))}
+    </FocusedAppNavigationSurfaceProvider>
+  );
 }
 
 function containRun(
@@ -419,18 +437,14 @@ function evaluateRecord(
     const action =
       target.kind === "thread"
         ? registration.item({
+            ...input.context,
             thread: target.thread,
             data: input.data,
-            sdk: input.sdk,
-            navigate: input.navigate,
-            experimental_panel: input.panel,
           })
         : (registration.experimental_bulkItem?.({
+            ...input.context,
             threads: target.threads,
             data: input.data,
-            sdk: input.sdk,
-            navigate: input.navigate,
-            experimental_panel: input.panel,
           }) ?? null);
     if (action === null) return null;
     return {

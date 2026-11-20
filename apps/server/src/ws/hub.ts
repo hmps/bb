@@ -262,6 +262,13 @@ export class HostOnlineRpcUnavailableError extends Error {
   }
 }
 
+export class HostOnlineRpcConnectionLostError extends HostOnlineRpcUnavailableError {
+  constructor() {
+    super();
+    this.name = "HostOnlineRpcConnectionLostError";
+  }
+}
+
 export class NotificationHub implements DbNotifier {
   private readonly clientKeysBySocket = new Map<
     HubSocket,
@@ -281,6 +288,7 @@ export class NotificationHub implements DbNotifier {
       connectedAt: number;
       heardSinceLivenessCheck: boolean;
       hostId: string;
+      leaseRenewedAt: number;
       localApiPort: number | null;
       platform: HostPlatform;
       quietLivenessChecks: number;
@@ -766,10 +774,12 @@ export class NotificationHub implements DbNotifier {
       this.cancelPendingDaemonDisconnect(existingSessionId);
       this.unregisterDaemon(existingSessionId);
     }
+    const connectedAt = Date.now();
     this.daemonSessions.set(sessionId, {
-      connectedAt: Date.now(),
+      connectedAt,
       heardSinceLivenessCheck: true,
       hostId,
+      leaseRenewedAt: connectedAt,
       localApiPort:
         this.daemonSessionLocalApiPortsBySessionId.get(sessionId) ?? null,
       platform:
@@ -811,9 +821,33 @@ export class NotificationHub implements DbNotifier {
     }
   }
 
+  getDaemonSessionSocket(sessionId: string): HubSocket | null {
+    return this.daemonSessions.get(sessionId)?.socket ?? null;
+  }
+
+  takeDaemonLeaseRenewal(
+    sessionId: string,
+    now: number,
+    renewalIntervalMs: number,
+  ): boolean {
+    const entry = this.daemonSessions.get(sessionId);
+    if (
+      entry === undefined ||
+      (now >= entry.leaseRenewedAt &&
+        now - entry.leaseRenewedAt < renewalIntervalMs)
+    ) {
+      return false;
+    }
+    entry.leaseRenewedAt = now;
+    return true;
+  }
+
   takeSilentDaemonSessionIds(maxQuietChecks: number): string[] {
     const silentSessionIds: string[] = [];
     for (const [sessionId, entry] of this.daemonSessions) {
+      if (this.pendingDaemonDisconnects.has(sessionId)) {
+        continue;
+      }
       if (entry.heardSinceLivenessCheck) {
         entry.heardSinceLivenessCheck = false;
         entry.quietLivenessChecks = 0;
@@ -1246,7 +1280,7 @@ export class NotificationHub implements DbNotifier {
         continue;
       }
       this.deleteHostOnlineRpcWaiter(requestId, waiter);
-      waiter.reject(new HostOnlineRpcUnavailableError());
+      waiter.reject(new HostOnlineRpcConnectionLostError());
     }
   }
 

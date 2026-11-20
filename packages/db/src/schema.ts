@@ -15,6 +15,11 @@ import {
   queuedMessageStateValues,
 } from "@bb/domain/queued-message-lifecycle";
 import { threadStatusValues } from "@bb/domain/thread-status";
+import {
+  heldTurnCompletionStatusValues,
+  threadTurnRequestKindValues,
+  threadTurnRequestPhaseValues,
+} from "@bb/domain/thread-run-state";
 import { startedOnBehalfOfInitiatorValues } from "@bb/domain/started-on-behalf-of";
 import { threadCreateOriginValues } from "@bb/domain/thread-create-origin";
 import { threadOriginKindValues } from "@bb/domain/thread-origin-kind";
@@ -33,6 +38,7 @@ import type {
   QueuedMessageWaitHolder,
   ReasoningLevel,
   ServiceTier,
+  SystemThreadInterruptedReason,
   TerminalSessionCloseReason,
   TerminalSessionStatus,
   ThreadDynamicContextFileStatus,
@@ -125,12 +131,12 @@ export const hosts = sqliteTable(
       .default("active"),
     suspendedAt: integer("suspended_at"),
     statusMessage: text("status_message"),
-    suspendRetryAt: integer("suspend_retry_at"),
     removeRetryAt: integer("remove_retry_at"),
     teardownAttempt: integer("teardown_attempt").notNull().default(0),
     teardownStatus: text("teardown_status").$type<
       "running" | "failed" | "removed"
     >(),
+    teardownBlockedByEnvironmentId: text("teardown_blocked_by_environment_id"),
     maxPermissionMode: text("max_permission_mode")
       .$type<PermissionMode>()
       .notNull()
@@ -383,6 +389,7 @@ export const pluginMarketplaces = sqliteTable("plugin_marketplaces", {
   lastSuccessfulRefreshAt: integer("last_successful_refresh_at"),
   lastAttemptedRefreshAt: integer("last_attempted_refresh_at"),
   lastError: text("last_error"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -700,6 +707,57 @@ export const threads = sqliteTable(
     index("threads_active_maintenance_idx")
       .on(table.status)
       .where(sql`${table.deletedAt} IS NULL`),
+  ],
+);
+
+export const threadTurnRequests = sqliteTable(
+  "thread_turn_requests",
+  {
+    requestId: text("request_id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: threadTurnRequestKindValues }).notNull(),
+    phase: text("phase", { enum: threadTurnRequestPhaseValues }).notNull(),
+    hostId: text("host_id").notNull(),
+    syncTitle: integer("sync_title", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    sentAt: integer("sent_at").notNull(),
+  },
+  (table) => [
+    index("thread_turn_requests_thread_idx").on(table.threadId, table.sentAt),
+  ],
+);
+
+export const threadRunStates = sqliteTable(
+  "thread_run_states",
+  {
+    threadId: text("thread_id")
+      .primaryKey()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    heldTurnId: text("held_turn_id"),
+    heldTurnStatus: text("held_turn_status", {
+      enum: heldTurnCompletionStatusValues,
+    }),
+    stopReason: text("stop_reason").$type<SystemThreadInterruptedReason>(),
+    stopRequestedAt: integer("stop_requested_at"),
+    stopSentAt: integer("stop_sent_at"),
+    stopAckedAt: integer("stop_acked_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("thread_run_states_stop_idx")
+      .on(table.stopRequestedAt)
+      .where(sql`${table.stopRequestedAt} IS NOT NULL`),
+    check(
+      "thread_run_states_held_check",
+      sql`(${table.heldTurnId} IS NULL) = (${table.heldTurnStatus} IS NULL)`,
+    ),
+    check(
+      "thread_run_states_stop_check",
+      sql`(${table.stopReason} IS NULL) = (${table.stopRequestedAt} IS NULL) AND (${table.stopSentAt} IS NULL OR ${table.stopRequestedAt} IS NOT NULL) AND (${table.stopAckedAt} IS NULL OR ${table.stopRequestedAt} IS NOT NULL)`,
+    ),
   ],
 );
 

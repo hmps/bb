@@ -18,7 +18,6 @@ export {
   type FakeLogLevel,
   type FakeMentionProviderRecord,
   type ExperimentalFakeHostRpcCall,
-  type InternalDoNotUseFakeTunnelIngress,
   type FakePluginHarness,
   type FakePluginHost,
   type FakePluginBehaviorDrivers,
@@ -50,3 +49,12 @@ export {
   type PublicSdkOnlyScanOptions,
   type PublicSdkOnlyViolation,
 } from "./public-sdk-only.js";
+export {
+  experimental_createDescendantPipe,
+  experimental_createProcessLifeline,
+  experimental_trackChildProcesses,
+  type ExperimentalChildProcessTracker,
+  type ExperimentalDescendantPipe,
+  type ExperimentalLifelineHolder,
+  type ExperimentalProcessLifeline,
+} from "./processes.js";

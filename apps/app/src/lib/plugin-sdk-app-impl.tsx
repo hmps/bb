@@ -1,4 +1,6 @@
 import { applicationLinkApprovals } from "./application-url";
+import { matchesAppShortcutKey } from "@bb/domain";
+import { sliceUtf16Head } from "@bb/text-utils";
 import {
   LazyPluginMarkdown,
   LazyPluginDiff,
@@ -120,13 +122,11 @@ import {
   useSidebarNavigationSplit,
 } from "./plugin-sidebar-navigation";
 import { SidebarNavigationIcon } from "@/components/sidebar/SidebarNavigationModel";
-import {
-  InfoList,
-  InfoSection,
-} from "@/components/secondary-panel/info/info-list";
+import { InfoList } from "@/components/secondary-panel/info/info-list";
 import { InfoListRow } from "@bb/shared-ui/info-list-row";
 import { DetailRow } from "@/components/ui/detail-card";
 import { ThreadContextCardRow } from "@/components/plugin/ThreadContextCardRow";
+import { SurfaceInfoSection } from "@/components/plugin/ThreadContextCardSection";
 import { useThreadContextKind } from "@/components/plugin/PluginThreadContextCard";
 import { useTabVisible } from "@/components/secondary-panel/tab-visibility";
 import { useServerChoices } from "@/hooks/useServerChoices";
@@ -185,6 +185,8 @@ export const pluginSdkAppImplementation = {
   experimental_VoiceRecordingBar: VoiceRecordingBar,
   experimental_FailedVoiceRecordings: FailedVoiceRecordings,
   experimental_ShortcutHint: AppCommandShortcutHint,
+  experimental_matchesShortcutKey: matchesAppShortcutKey,
+  experimental_sliceUtf16Head: sliceUtf16Head,
   experimental_ImageLightbox: ImageLightbox,
   experimental_PromptMentionIcon: ComposerMentionIcon,
   experimental_describePromptMention: describePromptMention,
@@ -216,7 +218,7 @@ export const pluginSdkAppImplementation = {
   experimental_SourceCode: LazyPluginSourceCode,
   experimental_FilePreview: ExperimentalFilePreview,
   experimental_Diff: LazyPluginDiff,
-  experimental_InfoSection: InfoSection,
+  experimental_InfoSection: SurfaceInfoSection,
   experimental_CollapsibleStackCard: CollapsibleStackCard,
   experimental_ThreadRowMetadata: ThreadRowMetadata,
   experimental_DetailRow: DetailRow,

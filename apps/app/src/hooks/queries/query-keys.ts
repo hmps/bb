@@ -62,13 +62,13 @@ const SYSTEM_THEME_QUERY_KEY = "systemTheme";
 export const SYSTEM_EXECUTION_OPTIONS_QUERY_KEY = "systemExecutionOptions";
 const SYSTEM_CLI_SKILLS_QUERY_KEY = "systemCliSkills";
 const SYSTEM_CLI_COMMAND_QUERY_KEY = "systemCliCommand";
-const SYSTEM_SETUP_GUIDE_QUERY_KEY = "systemSetupGuide";
 const SYSTEM_VERSION_QUERY_KEY = "systemVersion";
 const SYSTEM_APP_UPDATE_QUERY_KEY = "systemAppUpdate";
 const SERVER_MOVE_STATUS_QUERY_KEY = "serverMoveStatus";
 const HOST_PROVIDER_CLI_STATUS_QUERY_KEY = "hostProviderCliStatus";
 const HOST_PROVIDER_CLI_INSTALL_JOBS_QUERY_KEY = "hostProviderCliInstallJobs";
 const SYSTEM_PROVIDER_STATES_QUERY_KEY = "systemProviderStates";
+const HOST_PROVIDER_STATE_QUERY_KEY = "hostProviderState";
 const HOST_PATH_EXISTENCE_QUERY_KEY = "hostPathExistence";
 const PROJECT_SKILLS_QUERY_KEY = "projectSkills";
 export const SKILL_CONTENT_QUERY_KEY = "skillContent";
@@ -109,8 +109,7 @@ export interface ArchivedThreadsListFilters {
 export const ARCHIVED_THREADS_LIST_KIND = "archivedList";
 
 type HostsQueryKey =
-  | readonly [typeof HOSTS_QUERY_KEY]
-  | readonly [typeof HOSTS_QUERY_KEY, true];
+  readonly [typeof HOSTS_QUERY_KEY] | readonly [typeof HOSTS_QUERY_KEY, true];
 type HostQueryId = string | null | undefined;
 type HostQueryKey = readonly [typeof HOST_QUERY_KEY, HostQueryId];
 type AllHostQueryKeyPrefix = readonly [typeof HOST_QUERY_KEY];
@@ -418,7 +417,6 @@ type SystemThemeQueryKey = readonly [typeof SYSTEM_THEME_QUERY_KEY, string];
 type AllSystemThemesQueryKeyPrefix = readonly [typeof SYSTEM_THEME_QUERY_KEY];
 type SystemCliSkillsQueryKey = readonly [typeof SYSTEM_CLI_SKILLS_QUERY_KEY];
 type SystemCliCommandQueryKey = readonly [typeof SYSTEM_CLI_COMMAND_QUERY_KEY];
-type SystemSetupGuideQueryKey = readonly [typeof SYSTEM_SETUP_GUIDE_QUERY_KEY];
 type SystemVersionQueryKey = readonly [typeof SYSTEM_VERSION_QUERY_KEY];
 type SystemAppUpdateQueryKey = readonly [typeof SYSTEM_APP_UPDATE_QUERY_KEY];
 type ServerMoveStatusQueryKey = readonly [typeof SERVER_MOVE_STATUS_QUERY_KEY];
@@ -435,6 +433,11 @@ type HostProviderCliInstallJobsQueryKey = readonly [
 ];
 type AllHostProviderCliInstallJobsQueryKeyPrefix = readonly [
   typeof HOST_PROVIDER_CLI_INSTALL_JOBS_QUERY_KEY,
+];
+type HostProviderStateQueryKey = readonly [
+  typeof HOST_PROVIDER_STATE_QUERY_KEY,
+  string,
+  string,
 ];
 type SystemProviderStatesQueryKey = readonly [
   typeof SYSTEM_PROVIDER_STATES_QUERY_KEY,
@@ -992,10 +995,6 @@ export function systemCliCommandQueryKey(): SystemCliCommandQueryKey {
   return [SYSTEM_CLI_COMMAND_QUERY_KEY];
 }
 
-export function systemSetupGuideQueryKey(): SystemSetupGuideQueryKey {
-  return [SYSTEM_SETUP_GUIDE_QUERY_KEY];
-}
-
 export function systemConfigQueryKey(): SystemConfigQueryKey {
   return [SYSTEM_CONFIG_QUERY_KEY];
 }
@@ -1046,6 +1045,13 @@ export function hostProviderCliInstallJobsQueryKey(
 
 export function allHostProviderCliInstallJobsQueryKeyPrefix(): AllHostProviderCliInstallJobsQueryKeyPrefix {
   return [HOST_PROVIDER_CLI_INSTALL_JOBS_QUERY_KEY];
+}
+
+export function hostProviderStateQueryKey(args: {
+  hostId: string;
+  providerId: string;
+}): HostProviderStateQueryKey {
+  return [HOST_PROVIDER_STATE_QUERY_KEY, args.hostId, args.providerId];
 }
 
 export function systemProviderStatesQueryKey(

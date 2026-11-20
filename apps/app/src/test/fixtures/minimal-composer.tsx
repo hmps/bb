@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   experimental_ComposerRoot as ComposerRoot,
   experimental_useComposerContributions as useComposerContributions,
@@ -12,11 +12,12 @@ import {
 import { installPluginRuntime } from "@/lib/plugin-frontend";
 import { setPluginSlotRegistrations } from "@/lib/plugin-slots";
 import { makePluginRegistrationSet } from "./plugins";
+import { isNonImeKey } from "@bb/shared-ui/lib/ime-keyboard";
 
 export const MINIMAL_COMPOSER_PLUGIN_ID = "minimal-composer";
 
 export const minimalComposerLastRender: {
-  renderer: object | null;
+  renderer: ReturnType<typeof useComposerRenderer> | null;
   composer: { scope: unknown; key: string } | null;
 } = { renderer: null, composer: null };
 
@@ -27,8 +28,10 @@ function shifted(mention: ComposerMention, delta: number): ComposerMention {
 function MinimalComposer() {
   const composer = useComposer();
   const renderer = useComposerRenderer();
-  minimalComposerLastRender.renderer = renderer;
-  minimalComposerLastRender.composer = composer;
+  useLayoutEffect(() => {
+    minimalComposerLastRender.renderer = renderer;
+    minimalComposerLastRender.composer = composer;
+  });
   const { popups, Popup, Actions } = useComposerContributions();
   const rootRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -133,7 +136,7 @@ function MinimalComposer() {
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (renderer.dispatchAppCommandKey(event.nativeEvent)) return;
-    if (event.key !== "Enter" || event.shiftKey) return;
+    if (!isNonImeKey(event, "Enter") || event.shiftKey) return;
     event.preventDefault();
     if (event.metaKey || event.ctrlKey) submission.modifier?.run();
     else submission.enter.run();

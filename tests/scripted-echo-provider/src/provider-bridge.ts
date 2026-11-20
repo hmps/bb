@@ -245,6 +245,7 @@ const APPROVAL_KINDS: readonly ApprovalKind[] = [
 
 interface TurnPlan {
   approvalKind: ApprovalKind | null;
+  withdrawApproval: boolean;
   delayMs: number;
   questionRequested: boolean;
   responseText: string;
@@ -256,6 +257,7 @@ interface TurnPlan {
   recoverNowKind: ProviderRecoveryHint["kind"] | null;
   backgroundTask: boolean;
   settleBackgroundTasks: boolean;
+  stream: { chunks: number; intervalMs: number } | null;
 }
 
 function promptText(input: readonly PromptInput[]): string {
@@ -280,6 +282,7 @@ function parseTurnPlan(inputText: string): TurnPlan {
   const approvalKind =
     APPROVAL_KINDS.find((kind) => kind === approvalMatch?.[1]) ?? null;
   const holdMatch = /(?:^|\s)hold_turn(?:\s|$)/u.exec(inputText);
+  const streamMatch = /(?:^|\s)stream:(\d+):(\d+)(?:\s|$)/u.exec(inputText);
   const failMatch = /(?:^|\s)fail_turn:([^\s]+)(?:\s|$)/u.exec(inputText);
   const prestartFailMatch = /(?:^|\s)prestart_fail:([^\s]+)(?:\s|$)/u.exec(
     inputText,
@@ -299,6 +302,7 @@ function parseTurnPlan(inputText: string): TurnPlan {
     backgroundTask: /(?:^|\s)bg_task(?:\s|$)/u.test(inputText),
     settleBackgroundTasks: /(?:^|\s)bg_task_done(?:\s|$)/u.test(inputText),
     approvalKind,
+    withdrawApproval: /(?:^|\s)withdraw_approval(?:\s|$)/u.test(inputText),
     delayMs: delayMatch?.[1] === undefined ? 0 : Number(delayMatch[1]),
     questionRequested: questionMatch !== null,
     responseText:
@@ -306,6 +310,13 @@ function parseTurnPlan(inputText: string): TurnPlan {
     toolName: toolMatch?.[1] ?? null,
     toolTurnResolved: unresolvedToolMatch === null,
     holdTurn: holdMatch !== null,
+    stream:
+      streamMatch?.[1] === undefined || streamMatch[2] === undefined
+        ? null
+        : {
+            chunks: Number(streamMatch[1]),
+            intervalMs: Number(streamMatch[2]),
+          },
     failure:
       failureText === undefined
         ? null
@@ -525,6 +536,62 @@ function scheduleCompletion(
   }, delayMs);
 }
 
+function streamCompletion(
+  session: Session,
+  stream: { chunks: number; intervalMs: number },
+): void {
+  const turn = session.activeTurn;
+  if (turn === null) {
+    return;
+  }
+  const { providerTurnId } = turn;
+  session.messageCount += 1;
+  const key = { providerItemId: `msg-${session.messageCount}` };
+  emitDeltas(session.threadId, [
+    {
+      kind: "item.open",
+      key,
+      item: { type: "agentMessage", text: "" },
+      providerTurnId,
+    },
+  ]);
+  let sent = 0;
+  let text = "";
+  const step = () => {
+    if (session.activeTurn !== turn) {
+      return;
+    }
+    if (sent === stream.chunks) {
+      clearActiveTurn(session);
+      emitDeltas(session.threadId, [
+        {
+          kind: "item.textClose",
+          key,
+          channel: "agentMessage",
+          text,
+          providerTurnId,
+        },
+        { kind: "turn.boundary", status: "completed", providerTurnId },
+      ]);
+      return;
+    }
+    sent += 1;
+    const chunk = `Streamed chunk ${sent}.\n`;
+    text += chunk;
+    emitDeltas(session.threadId, [
+      {
+        kind: "item.textDelta",
+        key,
+        channel: "agentMessage",
+        text: chunk,
+        providerTurnId,
+      },
+    ]);
+    turn.timer = setTimeout(step, stream.intervalMs);
+  };
+  turn.timer = setTimeout(step, stream.intervalMs);
+}
+
 function beginTurn(args: {
   session: Session;
   input: readonly PromptInput[];
@@ -628,6 +695,13 @@ function beginTurn(args: {
       responseText: plan.responseText,
       delayMs: plan.delayMs,
     });
+    if (plan.withdrawApproval) {
+      setTimeout(() => {
+        if (!pendingReplies.delete(requestId)) return;
+        notify(BRIDGE_NOTIFICATION_METHODS.requestCancelled, { requestId });
+        scheduleCompletion(session, "Approval withdrawn", 0);
+      }, plan.delayMs);
+    }
     return;
   }
   if (plan.questionRequested) {
@@ -666,6 +740,10 @@ function beginTurn(args: {
       toolName: plan.toolName,
       delayMs: plan.delayMs,
     });
+    return;
+  }
+  if (plan.stream !== null) {
+    streamCompletion(session, plan.stream);
     return;
   }
   scheduleCompletion(

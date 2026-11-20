@@ -8,6 +8,7 @@ import {
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { observeSharedResize } from "@/lib/shared-resize-observer";
 import {
   experimental_useAppPanel,
   definePluginApp,
@@ -111,6 +112,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { usePortalScopeProps } from "@/lib/portal-scope";
+import { isNonImeKey } from "@/lib/ime-keyboard";
 
 interface Vault {
   id: string;
@@ -550,7 +552,7 @@ function TiptapEditor(props: {
           "aria-multiline": "true",
         },
         handleKeyDown(view, event) {
-          if (!inline || event.key !== "Escape") return false;
+          if (!inline || !isNonImeKey(event, "Escape")) return false;
           view.dom.blur();
           return true;
         },
@@ -1022,12 +1024,12 @@ function InlineDocument({
   useEffect(() => {
     const content = contentRef.current;
     if (!openInTab || !content) return;
-    const measure = () =>
-      setTruncated(content.getBoundingClientRect().height > 400);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
+    const measure = () => content.getBoundingClientRect().height > 400;
+    setTruncated(measure());
+    return observeSharedResize(content, {
+      read: measure,
+      write: setTruncated,
+    });
   }, [state.loaded, openInTab]);
   const proposal = state.base?.proposal ?? null;
   const sha256 = state.base?.sha256 ?? "";
@@ -1778,7 +1780,7 @@ function NotesSidebarNavigation(props: NotesSidebarNavigationProps) {
               value={props.query}
               onChange={(event) => props.onQueryChange(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
+                if (!isNonImeKey(event, "Escape")) return;
                 props.onQueryChange("");
                 props.onSearchOpenChange(false);
               }}

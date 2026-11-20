@@ -44,12 +44,14 @@ import { createNodeBbSdk, type BbSdk } from "@bb/sdk";
 import {
   getInstalledPlugin,
   getPluginSafeMode,
+  getThread,
   listInstalledPlugins,
   prunePluginSchedules,
   upsertPluginSchedule,
   type InstalledPluginRow,
 } from "@bb/db";
 import { toThreadResponseFromThread } from "../threads/thread-runtime-display.js";
+import { threadOfEvent } from "@get-bb/plugin-sdk/internal/thread-event-gate";
 import {
   brandingAssetHash,
   loadPluginAppBundle,
@@ -379,6 +381,34 @@ export interface PluginLoadHold {
   sources: readonly string[];
   detail: string;
   isActive(): Promise<boolean>;
+}
+
+function linkCallSignal(
+  caller: AbortSignal,
+  lifetime: AbortSignal,
+): { signal: AbortSignal; unlink(): void } {
+  const controller = new AbortController();
+  const links = [caller, lifetime].map((source) => ({
+    source,
+    onAbort: () => {
+      unlink();
+      controller.abort(source.reason);
+    },
+  }));
+  function unlink(): void {
+    for (const { source, onAbort } of links) {
+      source.removeEventListener("abort", onAbort);
+    }
+  }
+  const aborted = links.find(({ source }) => source.aborted);
+  if (aborted !== undefined) {
+    controller.abort(aborted.source.reason);
+  } else {
+    for (const { source, onAbort } of links) {
+      source.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+  return { signal: controller.signal, unlink };
 }
 
 export function createPluginRuntime(context: PluginRuntimeContext) {
@@ -908,10 +938,11 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
     const lifetime = instance.stopping.signal.aborted
       ? released
       : instance.stopping.signal;
-    const signal =
+    const call =
       callerSignal === undefined
-        ? lifetime
-        : AbortSignal.any([callerSignal, lifetime]);
+        ? { signal: lifetime, unlink: () => {} }
+        : linkCallSignal(callerSignal, lifetime);
+    const signal = call.signal;
     const stats = statsFor(id);
     const startedAt = performance.now();
     const execution = runEventLoopWork(`plugin:${id} ${label}`, () =>
@@ -923,6 +954,7 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
     );
     instance.invocations.add(settled);
     void settled.then(() => {
+      call.unlink();
       instance.invocations.delete(settled);
       const elapsedMs = performance.now() - startedAt;
       stats.count += 1;
@@ -1016,7 +1048,10 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
    * payload is assembled and handlers run on the next macrotask, after the
    * transition (and any surrounding transaction) has settled. Handlers are
    * looked up live at dispatch time, so a plugin disposed in between
-   * receives nothing.
+   * receives nothing. A plugin's events for a thread its own in-flight
+   * `threads.spawn` or `threads.fork` may have created wait in its
+   * `threadEventGate` until that call has returned to it, so the plugin has
+   * recorded the thread before it hears how the thread's turn went.
    *
    * A builder may return null for "on second look there is nothing to
    * announce" — a `turn.failed` on a thread that never dispatched a turn, say.
@@ -1040,12 +1075,27 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
       }
       if (payload === null) return;
       const delivered = payload;
+      const thread = threadOfEvent(event, delivered);
+      const subject =
+        thread === null
+          ? null
+          : {
+              threadId: thread.threadId,
+              createdAt: () =>
+                thread.createdAt ??
+                getThread(deps.db, thread.threadId)?.createdAt ??
+                null,
+            };
       for (const plugin of loaded.values()) {
-        for (const handler of [...plugin.handle.threadEventHandlers[event]]) {
-          void invokeWrapped(plugin, `${event} handler`, () =>
-            handler(delivered),
-          );
-        }
+        if (plugin.handle.threadEventHandlers[event].length === 0) continue;
+        plugin.handle.threadEventGate.deliver(subject, () => {
+          if (loaded.get(plugin.pluginId) !== plugin) return;
+          for (const handler of [...plugin.handle.threadEventHandlers[event]]) {
+            void invokeWrapped(plugin, `${event} handler`, () =>
+              handler(delivered),
+            );
+          }
+        });
       }
     });
   }
@@ -1890,20 +1940,6 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
           ports,
         });
       },
-      setNextTunnels: (config) => {
-        if (!deps.sharedPorts) {
-          throw new Error("host shared-port control plane is unavailable");
-        }
-        deps.sharedPorts.setNextTunnelConfig(row.id, config);
-      },
-      nextTunnelStatuses: () =>
-        (deps.sharedPorts?.listNextTunnelStatuses() ?? []).map((entry) => ({
-          hostId: entry.hostId,
-          hostName: entry.hostName,
-          ...entry.status,
-        })),
-      onNextTunnelStatusChange: (listener) =>
-        deps.sharedPorts?.onNextTunnelStatusChange(listener) ?? (() => {}),
       replaceDeclaredSharedPorts: (declarations) => {
         if (declarations.length > 0 && !deps.sharedPorts) {
           throw new Error("host shared-port control plane is unavailable");
@@ -1924,12 +1960,6 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
           ...args,
           artifact: hostArtifactCandidate,
         });
-      },
-      openTunnelIngress: (audience) => {
-        if (!deps.openTunnelIngress) {
-          throw new Error("tunnel ingress is unavailable in this plugin host");
-        }
-        return deps.openTunnelIngress(audience);
       },
       registerAiService: (declaration) =>
         deps.aiServices.register({

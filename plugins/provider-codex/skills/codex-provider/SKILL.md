@@ -5,6 +5,11 @@ description: "Diagnose BB-specific Codex session controls, MCP elicitation and C
 
 # Codex provider
 
+The provider requires Codex CLI 0.136.0 or newer. On Codex 0.145.0 and newer,
+`Disable provider subagents` disables native subagent tools through
+`agents.enabled` and overrides `features.multi_agent_v2` to false for BB
+sessions. Older versions retain the legacy subagent settings.
+
 Codex supports structured plan requests, editing and rerunning eligible messages,
 and compaction through the corresponding core `bb thread` commands.
 Stopping a running Codex thread pauses its active Goal, as Codex's own client
@@ -15,6 +20,14 @@ remove the Goal without starting a turn, and any other `/goal` text goes to
 Codex as a normal prompt. `bb thread clear-goal <id>` also removes the
 thread's Goal, whatever its status, and waits for provider confirmation.
 Inspect the thread before recovery actions.
+
+When switching between local Codex and Account Pooler routing, bb checks the
+provider returned by a successful resume and handles Codex's structured
+provider-mismatch and missing-pool errors. When migration is needed, bb forks
+the complete native history into the selected provider before sending a turn.
+BB retains the thread, workspace, visible history, and original native session.
+A copied Goal waits for the next explicit turn. A failed migration stops the
+turn and reports the provider error. This recovery applies to BB sessions.
 
 Codex questions from `request_user_input` pause the turn until answered.
 Questions from `request_user_input_async` do not pause it: the plugin opens a

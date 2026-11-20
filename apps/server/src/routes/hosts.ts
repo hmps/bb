@@ -28,6 +28,11 @@ import { resolveBridgeLaunchForProviderId } from "../services/system/provider-br
 import type { PluginService } from "../services/plugins/plugin-service.js";
 import { COMMAND_TIMEOUT_MS } from "../constants.js";
 import { ApiError } from "../errors.js";
+import { errorMessage } from "../services/lib/error-log-fields.js";
+import {
+  operationComplete,
+  operationInProgress,
+} from "../services/lib/operation-response.js";
 import {
   getGateAuthKind,
   type RequestHeaderReader,
@@ -59,16 +64,19 @@ import {
   startMachineReconciliation,
   forceMachineRemoval,
   retryMachineCleanup,
+  readMachineRemovalOutcome,
   sweepProviderMachine,
 } from "../services/machines/provider-orchestration.js";
 import { getMachineEnrollmentService } from "../services/machines/machine-services.js";
 import { manualHostCommand } from "../services/machines/manual-provider.js";
 import { prepareReconnect } from "../services/machines/reconnect.js";
 import { emitPluginHostDeleted } from "../services/plugins/plugin-thread-events.js";
+import { resolveHostProviderEnv } from "../services/plugins/plugin-agent-contributions.js";
 
 const DISCOVERED_REPOS_MAX_DEPTH = 5;
 const DISCOVERED_REPOS_SINCE_DAYS = 30;
 const DISCOVERED_REPOS_LIMIT = 10;
+const DISCOVERED_REPOS_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 const PROVIDER_CLI_INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -109,7 +117,7 @@ async function revokeConnectMachineCredential(
   deps: AppDeps,
   plugins: PluginService,
   machineId: string,
-): Promise<void> {
+): Promise<string | null> {
   try {
     const connectPlugin = plugins
       .list()
@@ -128,11 +136,13 @@ async function revokeConnectMachineCredential(
       null,
     );
     if (!result.ok) throw new Error(result.error.message);
+    return null;
   } catch (error) {
     deps.logger.error(
       { err: error, machineId },
       "Host was removed locally, but its bb connect machine credential could not be revoked. Revoke this machine manually from the getbb.app dashboard.",
     );
+    return `The machine was removed from this server, but its bb connect credential could not be revoked: ${errorMessage(error)}. Revoke it from the getbb.app dashboard.`;
   }
 }
 
@@ -267,7 +277,7 @@ export function registerHostRoutes(
       );
     }
     deps.hub.requestHostProtocolUpdateRetry(hostId);
-    return context.json({ ok: true as const });
+    return context.json(operationInProgress());
   });
 
   post(routes.reconcile, (context) => {
@@ -295,16 +305,16 @@ export function registerHostRoutes(
 
   post(routes.retryCleanup, async (context) => {
     assertHostManagementAllowed(context);
-    await retryMachineCleanup(deps, context.req.param("id"));
-    return context.json({ ok: true as const });
+    return context.json(
+      await retryMachineCleanup(deps, context.req.param("id")),
+    );
   });
 
   del(routes.delete, async (context, query) => {
     assertHostManagementAllowed(context);
     const hostId = context.req.param("id");
     if (query.force === "true") {
-      await forceMachineRemoval(deps, hostId);
-      return context.json({ ok: true as const });
+      return context.json(await forceMachineRemoval(deps, hostId));
     }
     const host = requireMutableHost(deps, hostId);
     if (resolvePrimaryHostId(deps) === hostId) {
@@ -319,7 +329,7 @@ export function registerHostRoutes(
       requestMachineRemoval(deps, hostId);
       settleRemovedHostWork(deps, { hostId });
       await sweepProviderMachine(deps, hostId);
-      return context.json({ ok: true });
+      return context.json(readMachineRemovalOutcome(deps, hostId));
     }
 
     await serverAccess.release(deps, { key: hostId, hostId });
@@ -336,14 +346,18 @@ export function registerHostRoutes(
     });
     deps.lifecycleDedupers.providerModelCatalogs.forgetHost(deps, hostId);
     if (destroyed !== null) emitPluginHostDeleted(destroyed);
-    if (host.connectMachineId !== null) {
-      await revokeConnectMachineCredential(
-        deps,
-        plugins,
-        host.connectMachineId,
-      );
-    }
-    return context.json({ ok: true });
+    const revokeWarning =
+      host.connectMachineId === null
+        ? null
+        : await revokeConnectMachineCredential(
+            deps,
+            plugins,
+            host.connectMachineId,
+          );
+    return context.json({
+      ...operationComplete(),
+      warnings: revokeWarning === null ? [] : [revokeWarning],
+    });
   });
 
   get(routes.discoveredRepos, async (context) => {
@@ -351,7 +365,8 @@ export function registerHostRoutes(
     assertUsableHostId(deps, { hostId });
     const result = await callHostRetryableOnlineRpc(deps, {
       hostId,
-      timeoutMs: COMMAND_TIMEOUT_MS,
+      signal: context.req.raw.signal,
+      timeoutMs: DISCOVERED_REPOS_TIMEOUT_MS,
       command: {
         type: "host.discover_repos",
         maxDepth: DISCOVERED_REPOS_MAX_DEPTH,
@@ -509,6 +524,10 @@ export function registerHostRoutes(
             providerId: payload.provider,
             action: payload.actionKind,
             bridgeLaunch,
+            contributedEnv: await resolveHostProviderEnv(
+              hostId,
+              payload.provider,
+            ),
           },
         });
         const events = await settleUnneededProviderInstallation(deps, {
@@ -519,9 +538,7 @@ export function registerHostRoutes(
           events: result.events,
         });
         if (
-          events.some(
-            (event) => event.type === "completed" && event.success,
-          )
+          events.some((event) => event.type === "completed" && event.success)
         ) {
           deps.providerRegistry.forgetInstalledKey({
             hostId,

@@ -11,7 +11,7 @@ import { useRootComposePlacement } from "@/lib/root-compose-selection";
 import { useInitialPromptDraft } from "@/components/promptbox/mentions/initial-prompt-draft";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useSystemProviders } from "@/hooks/queries/system-queries";
+import { useProviderDirectory } from "@/hooks/queries/system-queries";
 import {
   findLocalPathProjectSourceForHost,
   type EnvironmentStatus,
@@ -74,7 +74,7 @@ import {
   createPanelActionDestination,
   usePluginNewThreadPanelActions,
 } from "@/components/plugin/PluginPanelActions";
-import { usePluginSlots } from "@/lib/plugin-slots";
+import { usePluginSlotKind } from "@/lib/plugin-slots";
 import { useCreateThread } from "@/hooks/mutations/thread-runtime-mutations";
 import {
   useEnvironmentTerminals,
@@ -86,6 +86,7 @@ import { usePanelFiles } from "@/components/secondary-panel/usePanelFiles";
 import { usePanelTerminals } from "@/components/secondary-panel/usePanelTerminals";
 import { useEnvironment } from "@/hooks/queries/environment-queries";
 import { useHostProviderCliStatus } from "@/hooks/queries/system-queries";
+import { useProviderCliStatusRecheckOnFocus } from "@/hooks/useProviderCliStatusRecheckOnFocus";
 import {
   requestComposerFocus,
   subscribeComposerFocusRequests,
@@ -116,7 +117,11 @@ import {
 } from "@/lib/fixed-panel-tabs";
 import type { MarkdownPreviewLinkHandler } from "@/components/ui/markdown-link";
 import { UrlOpenRoutingProvider } from "@/lib/url-open-routing";
-import { AppNavigationHostProvider } from "@/lib/app-navigation-host";
+import {
+  AppNavigationHostCapture,
+  AppNavigationSurfaceProvider,
+  useAppNavigationHostRef,
+} from "@/lib/app-navigation-host";
 import { useAppPanelController } from "@/lib/app-fixed-tab-navigation";
 import { useRootComposeProjectId } from "@/lib/root-compose-selection";
 import {
@@ -536,7 +541,7 @@ function RootComposeSurface({
   const searchInitialDraft = useInitialPromptDraft(searchInitialPrompt);
   const stateInitialDraft = useInitialPromptDraft(stateInitialPrompt);
   const setPromptDraft = composerActions.restoreDraft;
-  const restorePromptDraftIfEmpty = promptDraft.restoreIfEmpty;
+  const seedPromptDraftIfEmpty = promptDraft.seedIfEmpty;
 
   useEffect(() => {
     const initialPrompt = readInitialPromptFromSearch(location.search);
@@ -611,7 +616,7 @@ function RootComposeSurface({
     if (shouldReplaceInitialPromptFromLocationState(location.state)) {
       setPromptDraft(nextDraft);
     } else {
-      restorePromptDraftIfEmpty(nextDraft);
+      seedPromptDraftIfEmpty(nextDraft);
     }
     void navigate(getRootComposeRoutePath() + location.search, {
       replace: true,
@@ -621,7 +626,7 @@ function RootComposeSurface({
     location.search,
     location.state,
     navigate,
-    restorePromptDraftIfEmpty,
+    seedPromptDraftIfEmpty,
     setPromptDraft,
     stateInitialDraft,
   ]);
@@ -640,7 +645,7 @@ function RootComposeSurface({
     () => buildMobileRecentThreads({ sidebarNavigation }),
     [sidebarNavigation],
   );
-  const systemProviders = useSystemProviders().data;
+  const systemProviders = useProviderDirectory().data;
   const mobileRecentProvidersById = useMemo(() => {
     const byId = new Map<string, ProviderInfo>();
     for (const provider of systemProviders ?? []) {
@@ -676,6 +681,10 @@ function RootComposeSurface({
       ? selectedProviderCliStatus
       : null;
   const isProviderCliBlocked = blockingProviderCliStatus !== null;
+  useProviderCliStatusRecheckOnFocus({
+    hostId: rootProjectHostId,
+    blocked: isProviderCliBlocked,
+  });
   const selectedProviderCliIssue = useMemo(() => {
     if (blockingProviderCliStatus === null) {
       return null;
@@ -821,8 +830,9 @@ function RootComposeSurface({
     () => setShouldAutoFocusNewTab(false),
     [],
   );
-  const { newThreadPanelActions: rootPanelNewThreadPanelActions } =
-    usePluginSlots();
+  const rootPanelNewThreadPanelActions = usePluginSlotKind(
+    "newThreadPanelActions",
+  );
   const {
     browserTabs,
     activateTab,
@@ -956,10 +966,10 @@ function RootComposeSurface({
     activeTabId: isSecondaryPanelOpen ? activeFixedSecondaryTabId : null,
     close: closeWorkspacePanel,
     destinations: panelDestinations,
-    isFocused: isFocusedPane,
   });
+  const surfaceHost = useAppNavigationHostRef();
   const rootPluginPanelActions = usePluginNewThreadPanelActions({
-    panel,
+    hostRef: surfaceHost,
     projectId: isProjectless ? null : projectId,
   });
   const openAttachment = useCallback(
@@ -1421,7 +1431,11 @@ function RootComposeSurface({
       <PluginComposerHostProvider value={pluginComposerHost}>
         <AttachmentOpenerContext.Provider value={openAttachment}>
           <UrlOpenRoutingProvider openInAppBrowser={openBrowser}>
-            <AppNavigationHostProvider capabilities={appNavigationCapabilities}>
+            <AppNavigationSurfaceProvider
+              capabilities={appNavigationCapabilities}
+              isFocused={isFocusedPane}
+            >
+              <AppNavigationHostCapture hostRef={surfaceHost} />
               <AppPanelTabsPublisher
                 publish={panel.publishTabs}
                 activeTabId={activeFixedSecondaryTabId}
@@ -1472,7 +1486,7 @@ function RootComposeSurface({
               >
                 {promptBox}
               </RootComposeSecondaryContent>
-            </AppNavigationHostProvider>
+            </AppNavigationSurfaceProvider>
           </UrlOpenRoutingProvider>
         </AttachmentOpenerContext.Provider>
       </PluginComposerHostProvider>

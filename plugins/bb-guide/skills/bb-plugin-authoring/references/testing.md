@@ -79,7 +79,7 @@ members. Use them in behavioral tests so a new required contract field changes
 one shared default. Keep schema, serialization, and command-output fixtures
 explicit when their exact complete shape is the assertion.
 `experimental_makePanelController(overrides?)` builds the
-`experimental_panel` for a command, thread action or message action called
+`panel` for a command, thread action or message action called
 directly: every method declines and `getTabs()` reports a closed, empty panel
 except the ones you pass, such as `{ toggleTab: vi.fn(() => true) }`.
 
@@ -90,7 +90,14 @@ aliases). `lifecycle.reload(factory)` preserves settings/KV/database state; a
 throwing replacement leaves the current registrations and API live.
 `lifecycle.install()` runs `bb.onInstall` handlers as a fresh install does; a
 throwing handler is logged at warn. `emitThreadEvent` accepts the event
-names `bb.events.on` does.
+names `bb.events.on` does. As on the server, an event for a thread whose
+`createdAt` is at or after the start of a pending `threads.spawn` or
+`threads.fork` waits until that call returns; emit it from inside the stub,
+without awaiting, to test a turn that ends before spawn returns.
+`thread.idle`, `thread.failed`, `thread.archived` and `thread.deleted` are
+each followed by their `experimental_thread.settled` event, as on the server;
+emit the `cancelled` outcome yourself, since the fake has no thread to attach
+to a `message.cancelled`.
 Thread events are observe-only; there are exactly seven `thread.*` events
 (`thread.created`, `thread.active`, `thread.idle`, `thread.failed`,
 `thread.archived`, `thread.unarchived`, `thread.deleted`), and handler return
@@ -134,6 +141,19 @@ checks source and test imports, dynamic import names, relative paths that leave
 the package, and private `@bb/*` dependencies. It permits public SDK paths,
 Zod, Node modules, package-local files, and declared extra patterns. It skips
 `node_modules` and `dist`.
+
+To check that processes exit, observe a handle rather than a PID; a
+recycled PID makes `process.kill(pid, 0)` report an unrelated process.
+`experimental_trackChildProcesses()` records every `ChildProcess` the test
+process spawns, including ones your code spawns internally; assert on
+`running()` or await `waitForExit()`, and `dispose()` it in cleanup. For
+descendants, call `experimental_createProcessLifeline()` and embed
+`lifeline.holdSource("label")` in the descendant's Node script. Then await
+`(await lifeline.waitForHolders(1))[0].exited`, clean up with `holder.kill()`,
+and `await lifeline.close()` at the end. A shell descendant that must start
+instantly, for example one racing a short timeout, can instead redirect into
+`experimental_createDescendantPipe()`'s `path` (POSIX only). Await `opened`,
+then `closed`.
 
 Host entry (`host.ts`) — `@get-bb/plugin-sdk/testing/host`:
 
@@ -181,7 +201,7 @@ const slot = renderSlot(
       listNotes: () => ({ root: "/notes", notes: [], error: null }),
     }, // method → handler, calls logged
     settings: { greeting: "hi" }, // useSettings() values
-    context: { projectId: "p1", threadId: null }, // useBbContext()
+    context: { projectId: "p1", threadId: null }, // useBbContext(); experimental_pluginPanel defaults to null
     realtimeConnectionState: "reconnecting", // useRealtimeConnectionState()
     openUrl: (url) => url.startsWith("https://"),
   },

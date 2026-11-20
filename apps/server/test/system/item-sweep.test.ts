@@ -57,32 +57,44 @@ describe("item sweeps", () => {
     expect(failuresOf(deps, "test-isolation")).toEqual([]);
   });
 
-  it("doubles the delay on each failure and logs an error from the fifth", async () => {
+  it("doubles the delay on each failure, needs recovery after the eighth, then retries hourly until a success clears it", async () => {
     const deps = setup();
     const error = vi.spyOn(deps.logger, "error");
+    let failing = true;
+    let calls = 0;
     const sweep = defineItemSweep({
       name: "test-escalation",
       concurrency: 1,
       list: () => ["a"],
       key: (item) => item,
       process: () => {
-        throw new Error("still broken");
+        calls += 1;
+        if (failing) throw new Error("still broken");
       },
     });
     const delays: number[] = [];
     let now = NOW;
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
+    for (let attempt = 1; attempt <= 10; attempt += 1) {
       await sweep.run(deps, now);
-      const failure = failuresOf(deps, "test-escalation")[0];
-      if (failure === undefined) throw new Error("missing failure record");
-      delays.push(failure.retryAt - now);
-      now = failure.retryAt;
+      const retryAt = failuresOf(deps, "test-escalation")[0]?.retryAt;
+      if (retryAt === undefined) throw new Error("missing retry");
+      delays.push(retryAt - now);
+      now = retryAt;
     }
-    expect(delays).toEqual([60_000, 120_000, 240_000, 480_000, 960_000]);
-    expect(error).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ attempts: 5, itemKey: "a" }),
-      "Sweep item keeps failing; other items continue",
+    expect(delays).toEqual(
+      [1, 2, 4, 8, 16, 32, 60, 60, 60, 60].map((minutes) => minutes * 60_000),
     );
+    expect(error).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ attempts: 8, itemKey: "a" }),
+      "Sweep item needs recovery; retrying hourly until it succeeds or bb server sweeps retry",
+    );
+    await sweep.run(deps, now - 1);
+    expect(calls).toBe(10);
+
+    failing = false;
+    await sweep.run(deps, now);
+    expect(calls).toBe(11);
+    expect(failuresOf(deps, "test-escalation")).toEqual([]);
     error.mockRestore();
   });
 
@@ -142,12 +154,34 @@ describe("item sweeps", () => {
     expect(startedWhileOverlapping).toEqual(["a", "b"]);
   });
 
-  it("stops waiting for items that run longer than a minute, skips them while they run, and records their later failure", async () => {
+  it("stops waiting for items that run longer than a minute, skips them while they run, and records their later failure", async ({
+    signal,
+    onTestFinished,
+  }) => {
+    const deps = setup();
+    const finishHung = new Map<string, () => void>();
+    let first: Promise<void> | undefined;
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = () =>
+      (cleanupPromise ??= (async () => {
+        for (const finish of finishHung.values()) finish();
+        try {
+          await first;
+        } finally {
+          deps.db.$client.close();
+          vi.useRealTimers();
+        }
+      })());
+    onTestFinished(cleanup);
     try {
-      const deps = setup();
       const rejectHung = new Map<string, (error: Error) => void>();
       const processed: string[] = [];
+      const admitted = new Set<string>();
+      let allItemsStarted!: () => void;
+      const itemsStarted = new Promise<void>((resolve) => {
+        allItemsStarted = resolve;
+      });
       const listed: Array<ReadonlySet<string>> = [];
       const sweep = defineItemSweep({
         name: "test-detach",
@@ -158,25 +192,31 @@ describe("item sweeps", () => {
         },
         key: (item) => item,
         process: (item) => {
+          admitted.add(item);
+          if (admitted.size === 3) allItemsStarted();
           if (item === "quick") {
             processed.push(item);
             return;
           }
-          return new Promise<void>((_resolve, reject) => {
+          return new Promise<void>((resolve, reject) => {
+            finishHung.set(item, resolve);
             rejectHung.set(item, reject);
           });
         },
       });
 
       let finished = false;
-      const first = sweep.run(deps, NOW).then(() => {
+      first = sweep.run(deps, NOW).then(() => {
         finished = true;
       });
+      await itemsStarted;
+      signal.throwIfAborted();
       await vi.advanceTimersByTimeAsync(59_999);
       expect(processed).toEqual(["quick"]);
       expect(finished).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       await first;
+      signal.throwIfAborted();
 
       await sweep.run(deps, NOW + 1);
       expect(listed.at(-1)).toEqual(new Set(["hung-1", "hung-2"]));
@@ -195,7 +235,7 @@ describe("item sweeps", () => {
         },
       ]);
     } finally {
-      vi.useRealTimers();
+      await cleanup();
     }
   });
 });

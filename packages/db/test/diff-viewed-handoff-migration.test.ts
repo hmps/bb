@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createConnection, migrate } from "../src/index.js";
 import {
   dropPluginFailureLabelColumns,
+  dropPluginMarketplaceEnabledColumn,
+  rewindMachineTeardownRecoveryColumns,
+  dropThreadRunStateTables,
   restoreDiffViewedFilesTable,
 } from "./helpers/rewind.js";
 
@@ -13,7 +16,10 @@ function databaseBeforeHandoff(
   const db = createConnection(":memory:");
   migrate(db);
   restoreDiffViewedFilesTable(db);
+  dropThreadRunStateTables(db);
   dropPluginFailureLabelColumns(db);
+  rewindMachineTeardownRecoveryColumns(db);
+  dropPluginMarketplaceEnabledColumn(db);
   db.$client.pragma("foreign_keys = OFF");
   const insert = db.$client.prepare(
     "INSERT INTO diff_viewed_files (environment_id, target_key, path, revision, updated_at) VALUES (?, ?, ?, ?, ?)",

@@ -6,12 +6,7 @@ import {
 } from "../src/data/environments.js";
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  encodeClientTurnRequestIdNumber,
-  threadScope,
-  turnScope,
-  type ClientTurnRequestId,
-} from "@bb/domain";
+import { threadScope, turnScope } from "@bb/domain";
 import {
   type DbConnection,
   type SlowDbQueryLogger,
@@ -26,13 +21,11 @@ import {
 import {
   appendDaemonEventsInTransaction,
   findLastCompletedRootStoredTurn,
-  getFirstParentedTimelineBoundarySequence,
   getLatestStoredThreadEventOfTypes,
   getLatestModelFallbackRowSinceTurnRequest,
-  getTimelineGroupingContextChangesInRange,
+  hasTimelineGroupingContextChangesInRange,
   getUnfinishedCommandItemData,
   hasStoredSpawnAgentToolCall,
-  hasStoredTerminalClientTurnRequestEvent,
   listStoredEventRowsInSequenceRange,
   getLastStoredProviderThreadId,
   insertEvents,
@@ -695,54 +688,25 @@ describe("slow query index plans", () => {
     db.$client.close();
   });
 
-  it("resolves root turn starts for the parented boundary through the turn index", () => {
+  it("probes appended grouping-context rows through the type index", () => {
     const { db, thread } = setup();
 
-    const captured = captureStatements(db, () => {
-      expect(
-        getFirstParentedTimelineBoundarySequence(db, {
-          maxSeq: 10,
-          sequenceStart: 0,
-          threadId: thread.id,
-        }),
-      ).toBeNull();
-    });
-    const query = captured.find((entry) => entry.sql.includes("root_start"));
-    if (!query) {
-      throw new Error("Expected the parented timeline boundary SQL");
-    }
-    const details = queryPlanDetails({
-      db,
-      params: query.params,
-      sql: query.sql,
-    });
-    expect(details).toMatch(
-      /SEARCH root_start (?:EXISTS )?USING (?:COVERING )?INDEX events_thread_turn_type_item_sequence_idx \(thread_id=\? AND turn_id=\? AND type=\?\)/u,
+    const [query] = captureStatements(db, () =>
+      hasTimelineGroupingContextChangesInRange(db, {
+        afterSequence: 10,
+        threadId: thread.id,
+        throughSequence: 30,
+      }),
     );
-    expect(details).toMatch(
-      /SEARCH events USING COVERING INDEX events_parent_tool_call_thread_parent_sequence_idx \(thread_id=\? AND parent_tool_call_id>\?\)/u,
-    );
-    expect(details.indexOf("SCAN nested_history")).toBeGreaterThanOrEqual(0);
-    expect(details.indexOf("SCAN nested_history")).toBeLessThan(
-      details.indexOf("INDEX events_delegating_item_lookup_idx"),
-    );
-    expect(details).toMatch(
-      /SEARCH events USING (?:COVERING )?INDEX events_delegating_item_lookup_idx/u,
-    );
+    if (!query) throw new Error("Expected the grouping-context probe SQL");
+    expect(queryPlanDetails({ db, ...query }).split("\n")).toEqual([
+      "SEARCH events USING COVERING INDEX events_thread_type_sequence_idx (thread_id=? AND type=? AND sequence>? AND sequence<?)",
+    ]);
 
     db.$client.close();
   });
 
   it.each([
-    {
-      name: "probes appended grouping-context rows",
-      run: (db: DbConnection, threadId: string) =>
-        getTimelineGroupingContextChangesInRange(db, {
-          afterSequence: 10,
-          threadId,
-          throughSequence: 30,
-        }),
-    },
     {
       name: "lists rows in a sequence range",
       run: (db: DbConnection, threadId: string) =>
@@ -753,8 +717,9 @@ describe("slow query index plans", () => {
           threadId,
           throughSequence: 30,
         }),
+      probes: [],
     },
-  ])("$name through the thread sequence index", ({ run }) => {
+  ])("$name through the thread sequence index", ({ probes, run }) => {
     const { db, thread } = setup();
 
     const [query] = captureStatements(db, () => run(db, thread.id));
@@ -763,6 +728,7 @@ describe("slow query index plans", () => {
     }
     expect(queryPlanDetails({ db, ...query }).split("\n")).toEqual([
       "SEARCH events USING INDEX events_thread_sequence_idx (thread_id=? AND sequence>? AND sequence<?)",
+      ...probes,
     ]);
 
     db.$client.close();
@@ -973,56 +939,6 @@ describe("slow query index plans", () => {
       );
       expectNoThreadOnlyEventSeek(details);
     }
-
-    db.$client.close();
-  });
-
-  it("finds a terminal client turn request event through the type index", () => {
-    const { db, thread } = setup();
-    const acceptedRequestId = encodeClientTurnRequestIdNumber({ value: 1 });
-    const rejectedRequestId = encodeClientTurnRequestIdNumber({ value: 2 });
-    const pendingRequestId = encodeClientTurnRequestIdNumber({ value: 3 });
-    insertEvents(db, noopNotifier, [
-      {
-        threadId: thread.id,
-        sequence: 1,
-        type: "turn/input/accepted",
-        scope: turnScope("turn-1"),
-        itemId: null,
-        itemKind: null,
-        parentToolCallId: null,
-        data: JSON.stringify({ clientRequestId: acceptedRequestId }),
-      },
-      {
-        threadId: thread.id,
-        sequence: 2,
-        type: "client/turn/rejected",
-        scope: threadScope(),
-        itemId: null,
-        itemKind: null,
-        parentToolCallId: null,
-        data: JSON.stringify({ requestId: rejectedRequestId }),
-      },
-    ]);
-
-    const has = (requestId: ClientTurnRequestId) =>
-      hasStoredTerminalClientTurnRequestEvent(db, {
-        requestId,
-        threadId: thread.id,
-      });
-    const [query] = captureStatements(db, () => {
-      expect(has(pendingRequestId)).toBe(false);
-    });
-    expect(has(acceptedRequestId)).toBe(true);
-    expect(has(rejectedRequestId)).toBe(true);
-    if (!query) {
-      throw new Error("Expected the terminal client turn request SQL");
-    }
-    const details = queryPlanDetails({ db, ...query });
-    expect(details).toContain(
-      "SEARCH events USING INDEX events_thread_type_sequence_idx (thread_id=? AND type=?)",
-    );
-    expectNoThreadOnlyEventSeek(details);
 
     db.$client.close();
   });

@@ -305,6 +305,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
       kind: "none",
     },
     originDefaultBranch: "origin/main",
+    defaultWorktreeBaseBranch: "origin/main",
   },
   "host.list_branch_options": {
     branches: ["main"],
@@ -535,6 +536,7 @@ const ADDITIONAL_ONLINE_RPC_RESPONSE_ROUND_TRIP_CASES: OnlineRpcResponseRoundTri
         hasUncommittedChanges: true,
         operation: { kind: "merge", hasConflicts: true },
         originDefaultBranch: "origin/main",
+        defaultWorktreeBaseBranch: "origin/main",
       },
     },
   ];
@@ -1068,7 +1070,7 @@ describe("host-daemon command schemas", () => {
   });
 
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(267);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(273);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 
@@ -1095,52 +1097,15 @@ describe("host-daemon command schemas", () => {
     expect(contract.isCompatibleHostDaemonProtocolVersion(264)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(265)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(266)).toBe(false);
-    expect(contract.isCompatibleHostDaemonProtocolVersion(267)).toBe(true);
-    expect(contract.hostDaemonSupportsConnectNext(246)).toBe(false);
-    expect(contract.hostDaemonSupportsConnectNext(247)).toBe(true);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(267)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(268)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(269)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(270)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(271)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(272)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(273)).toBe(true);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(247)).toBe(false);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(248)).toBe(true);
-  });
-
-  it("parses connect next config and status messages strictly", () => {
-    const config = {
-      domain: "next.getbb.app",
-      server: { protocol: "wss", host: "tunnel.next.getbb.app", port: 443 },
-    };
-    expect(
-      hostDaemonServerWsMessageSchema.parse({
-        type: "connect-next.replace",
-        generation: 3,
-        config,
-      }),
-    ).toEqual({ type: "connect-next.replace", generation: 3, config });
-    expect(
-      hostDaemonServerWsMessageSchema.safeParse({
-        type: "connect-next.replace",
-        generation: 3,
-        config: { ...config, credential: "x" },
-      }).success,
-    ).toBe(false);
-    const status = {
-      state: "connected",
-      label: "laptop",
-      lastError: null,
-      nextRetryAt: null,
-      since: 1,
-      shares: [{ port: 3000, state: "active", error: null }],
-    };
-    expect(
-      hostDaemonDaemonWsMessageSchema.parse({
-        type: "connect-next.status",
-        status,
-      }),
-    ).toEqual({ type: "connect-next.status", status });
-    expect(
-      hostDaemonDaemonWsMessageSchema.safeParse({
-        type: "connect-next.status",
-        status: { ...status, state: "halted" },
-      }).success,
-    ).toBe(false);
   });
 
   it.each([
@@ -1200,7 +1165,7 @@ describe("host-daemon command schemas", () => {
     ).toBe(false);
   });
 
-  it("requires an explicit intent on a thread stop command", () => {
+  it("requires an explicit intent and aim on a thread stop command", () => {
     const base = {
       environmentId: "env_1",
       threadId: "thr_1",
@@ -1209,9 +1174,27 @@ describe("host-daemon command schemas", () => {
     expect(threadStopCommandSchema.safeParse(base).success).toBe(false);
     expect(
       threadStopCommandSchema.safeParse({ ...base, intent: "release" }).success,
+    ).toBe(false);
+    expect(
+      threadStopCommandSchema.safeParse({
+        ...base,
+        intent: "release",
+        aimedAt: null,
+      }).success,
     ).toBe(true);
     expect(
-      threadStopCommandSchema.safeParse({ ...base, intent: "pause" }).success,
+      threadStopCommandSchema.safeParse({
+        ...base,
+        intent: "interrupt",
+        aimedAt: { turnId: null, requestIds: ["creq_2222222222"] },
+      }).success,
+    ).toBe(true);
+    expect(
+      threadStopCommandSchema.safeParse({
+        ...base,
+        intent: "pause",
+        aimedAt: null,
+      }).success,
     ).toBe(false);
   });
 
@@ -1327,15 +1310,12 @@ describe("host-daemon command schemas", () => {
     expect(
       hostDaemonCommandSchema.parse({
         type: "environment.attach",
-        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
         path: "/tmp/project",
-        setupScriptTimeoutMs: null,
       }),
     ).toMatchObject({
       type: "environment.attach",
-      contributedEnv: [],
       path: "/tmp/project",
     });
 
@@ -2926,6 +2906,7 @@ describe("host-daemon session schemas", () => {
         agentCpuPriority: false,
         heartbeatIntervalMs: 5_000,
         leaseTimeoutMs: 30_000,
+        reconnectGraceMs: 30_000,
         connectShares: {
           generation: 2,
           ports: [3000, 8080],
@@ -2954,21 +2935,10 @@ describe("host-daemon session schemas", () => {
         agentCpuPriority: false,
         heartbeatIntervalMs: 5_000,
         leaseTimeoutMs: 30_000,
+        reconnectGraceMs: 30_000,
         endedInteractiveRequests: [],
       }).connectShares,
     ).toEqual({ generation: 0, ports: [] });
-
-    expect(
-      hostDaemonSessionOpenResponseSchema.parse({
-        sessionId: "session_default_next",
-        machineEnvironment: { revision: 0, entries: [] },
-        idleProviderSessionTimeoutMinutes: 30,
-        agentCpuPriority: false,
-        heartbeatIntervalMs: 5_000,
-        leaseTimeoutMs: 30_000,
-        endedInteractiveRequests: [],
-      }).connectNext,
-    ).toEqual({ generation: 0, config: null });
 
     expect(() =>
       hostDaemonSessionOpenResponseSchema.parse({

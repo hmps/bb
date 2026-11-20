@@ -25,6 +25,17 @@ invalid_value, missing_command. A failed server request uses the server's error
 code, such as thread_not_found or terminal_output_unavailable; otherwise the
 code is http_<status> or error.
 
+A command whose result reports its own failure, such as a batch where one
+machine or marketplace failed, or a plugin that failed to load or rolled back,
+prints that result instead of the envelope and still exits non-zero. Its
+message is on stderr.
+
+Commands that act rather than read print `{ok: true, progress, ...}`.
+`progress: "complete"` means the work is done; `"in-progress"` means the server
+accepted it and is still carrying it out, such as a machine still being
+removed or a thread still stopping. Both exit 0, and the readable output says
+which. A failed operation always exits non-zero.
+
 Parse stdout only. `2>&1` mixes the readable message into the JSON, and
 `2>/dev/null` hides it. Check the exit code, or test `.ok == false`, before
 reading fields.
@@ -114,7 +125,7 @@ the most-parsed commands ends with the same shape.
     {plugins: [{id, version, enabled, status, source, rootDir}]}    (wrapped in .plugins)
 
   bb skill list --json
-    {skills: [{id, name, description, scope, provider, filePath}]}    (wrapped in .skills)
+    {skills: [{id, name, description, scope, providers, filePath}]}    (wrapped in .skills; providers lists every provider that reads the skill file, [] for bb skills)
 
   bb marketplace list --json
     bare array

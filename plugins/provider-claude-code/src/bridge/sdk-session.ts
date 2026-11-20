@@ -131,7 +131,6 @@ function spawnRecordedClaudeProcess(args: {
     env: args.spawnOptions.env,
     signal: args.spawnOptions.signal,
     stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
   });
   child.stderr?.setEncoding("utf8").on("data", (data: string) => {
     args.onStderr(data);
@@ -458,9 +457,13 @@ export class SdkSession {
     const q = this.query;
     if (!q) return;
 
+    let sessionAnnounced = false;
     try {
       for await (const message of q) {
-        this.captureSessionId(message);
+        if (message.type === "system" && message.subtype === "init") {
+          sessionAnnounced = true;
+        }
+        if (sessionAnnounced) this.captureSessionId(message);
         this.onMessage(message);
       }
       this.onDone();

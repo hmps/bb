@@ -138,6 +138,10 @@
       "type": "registry:ui"
     },
     {
+      "name": "ime-keyboard",
+      "type": "registry:lib"
+    },
+    {
       "name": "inline-rename",
       "type": "registry:ui"
     },
@@ -312,6 +316,10 @@
     {
       "name": "separator",
       "type": "registry:ui"
+    },
+    {
+      "name": "shared-resize-observer",
+      "type": "registry:lib"
     },
     {
       "name": "sheet",

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAtom, useAtomValue } from "jotai";
 import { Link } from "react-router-dom";
 import type { ProviderInfo } from "@bb/domain";
 import { Button } from "@bb/shared-ui/button";
@@ -22,10 +23,7 @@ import { SIDEBAR_FOOTER_ACTION_CLASS } from "@bb/shared-ui/sidebar-row-classes";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar.js";
 import { useAppUpdateStatus } from "@/hooks/queries/app-update-queries";
 import { usePluginUpdateJobs } from "@/hooks/queries/plugin-update-job-queries";
-import {
-  useSystemConfig,
-  useSystemProviders,
-} from "@/hooks/queries/system-queries";
+import { useSystemProviders } from "@/hooks/queries/system-queries";
 import { useDesktopUpdateInfo } from "@/hooks/useDesktopUpdateInfo";
 import { useMachineAttention } from "@/hooks/useMachineAttention";
 import { useStartPluginUpdates } from "@/hooks/useStartPluginUpdates";
@@ -34,11 +32,14 @@ import { getProviderIconInfo } from "@/lib/provider-icon";
 import { getSettingsRoutePath } from "@/lib/route-paths";
 import {
   buildSidebarUpdateModel,
-  sidebarUpdateModelIsEmpty,
   type SidebarBbUpdate,
   type SidebarUpdateModel,
   type SidebarUpdateRow,
 } from "./sidebar-update-model";
+import {
+  showProviderCliUpdatesAtom,
+  skippedSidebarUpdatesAtom,
+} from "./sidebar-update-preferences";
 
 interface SidebarUpdatesBadgeProps {
   onNavigate?: () => void;
@@ -46,10 +47,12 @@ interface SidebarUpdatesBadgeProps {
 
 export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   const inventory = useUpdateInventory();
+  const showProviderCliUpdates = useAtomValue(showProviderCliUpdatesAtom);
+  const [skippedFingerprints, setSkippedFingerprints] = useAtom(
+    skippedSidebarUpdatesAtom,
+  );
   const providers = useSystemProviders().data;
   const appUpdate = useAppUpdateStatus().data;
-  const updateWhenIdle =
-    useSystemConfig().data?.experiments.updateWhenIdle === true;
   const { desktopApi, isDesktop } = useDesktopUpdateInfo();
   const providerJobs = useProviderCliInstallRunner();
   const pluginJobs = usePluginUpdateJobs().data ?? [];
@@ -68,8 +71,10 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
       appUpdate.desktopUpdateSupported === true);
   const desktopCanRelaunch =
     inventory.desktopUpdateReady && desktopApi !== null;
+  const bbNeedsAttention =
+    inventory.appUpdateAvailable || inventory.desktopUpdateReady;
   const bb: SidebarBbUpdate | null =
-    inventory.appUpdateAvailable || inventory.desktopUpdateReady
+    bbNeedsAttention || serverCanApply
       ? {
           version:
             appUpdate?.available != null
@@ -86,18 +91,22 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
               : (inventory.desktopInfo?.version ??
                 inventory.systemVersion?.currentVersion ??
                 null),
-          installsWhenIdle:
-            serverCanApply && updateWhenIdle && appUpdate.autoUpdate,
+          installsWhenIdle: serverCanApply && appUpdate.autoUpdate,
           restarting:
             appUpdate !== undefined && appUpdate.activity.phase !== "idle",
-          restartLabel:
-            serverCanApply || desktopCanRelaunch ? "Restart now" : null,
+          canRestart: serverCanApply || desktopCanRelaunch,
         }
       : null;
   const model = buildSidebarUpdateModel({
     bb,
+    bbFingerprint:
+      bb === null || !bbNeedsAttention
+        ? null
+        : `bb:${appUpdate?.available?.version ?? bb.version ?? "unknown"}`,
+    skippedFingerprints,
     machines: inventory.machines,
     plugins: inventory.plugins,
+    showProviderCliUpdates,
     providerJobs,
     pluginJobs,
   });
@@ -122,7 +131,6 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
     }
   }
 
-  const showUpdates = !sidebarUpdateModelIsEmpty(model);
   return (
     <>
       {machineAttention.label !== null ? (
@@ -153,7 +161,7 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
           </SidebarMenuButton>
         </SidebarMenuItem>
       ) : null}
-      {showUpdates ? (
+      {model.visible ? (
         <SidebarMenuItem
           className={cn(
             "shrink-0",
@@ -167,6 +175,7 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
             onNavigate={onNavigate}
             onUpdateAll={updateAll}
             onRestartBb={restartBb}
+            onSkip={() => setSkippedFingerprints(model.fingerprints)}
           />
           {appUpdateStart.confirmDialog}
         </SidebarMenuItem>
@@ -188,6 +197,7 @@ interface SidebarUpdateButtonProps {
   onNavigate?: () => void;
   onUpdateAll: () => void;
   onRestartBb: () => void;
+  onSkip: () => void;
 }
 
 export function SidebarUpdateButton({
@@ -197,6 +207,7 @@ export function SidebarUpdateButton({
   onNavigate,
   onUpdateAll,
   onRestartBb,
+  onSkip,
 }: SidebarUpdateButtonProps) {
   const { supportsHover } = useResponsiveOverlayBehavior();
   const [tapOpen, setTapOpen] = useState(false);
@@ -218,6 +229,10 @@ export function SidebarUpdateButton({
       }}
       onUpdateAll={onUpdateAll}
       onRestartBb={onRestartBb}
+      onSkip={() => {
+        setTapOpen(false);
+        onSkip();
+      }}
     />
   );
 
@@ -240,7 +255,7 @@ export function SidebarUpdateButton({
           sideOffset={8}
           mobileTitle="Updates"
           data-testid="sidebar-update-card"
-          className="w-76 p-3 text-xs"
+          className={UPDATE_CARD_CLASS}
         >
           {cardBody}
         </PopoverContent>
@@ -268,7 +283,7 @@ export function SidebarUpdateButton({
         align="end"
         sideOffset={8}
         data-testid="sidebar-update-card"
-        className="w-76 p-3 text-xs"
+        className={UPDATE_CARD_CLASS}
       >
         {cardBody}
       </HoverCardContent>
@@ -276,11 +291,46 @@ export function SidebarUpdateButton({
   );
 }
 
+const UPDATE_CARD_CLASS =
+  "w-76 p-3 text-xs max-md:pointer-coarse:px-4 max-md:pointer-coarse:pb-4";
+
+const UPDATE_CARD_ICON_CLASS = "size-3.5 max-md:pointer-coarse:size-4";
+
+const UPDATE_CARD_LINK_CLASS = cn(
+  "shrink-0 cursor-pointer text-foreground underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current",
+  "max-md:pointer-coarse:-my-3 max-md:pointer-coarse:py-3",
+);
+
+const UPDATE_CARD_BUTTON_CLASS =
+  "mt-3 h-7 w-full max-md:pointer-coarse:mt-4 max-md:pointer-coarse:h-9";
+
 const UPDATE_BUTTON_CLASS = cn(
   SIDEBAR_FOOTER_ACTION_CLASS,
   "rounded-full bg-sidebar-accent text-sidebar-foreground [&>[data-icon-root]]:opacity-100",
   "hover:bg-sidebar-border hover:text-sidebar-foreground active:bg-sidebar-border",
 );
+
+export function sidebarUpdateAllLabel(model: SidebarUpdateModel): string {
+  if (model.startableCount === 0) return "Updating…";
+  if (model.retryOnly) return "Try again";
+  const startable = model.rows.filter((row) =>
+    row.kind === "provider" ? row.start !== null : row.startable,
+  );
+  const count = startable.length;
+  const hasProviders = startable.some((row) => row.kind === "provider");
+  const hasPlugins = startable.some((row) => row.kind === "plugin");
+  const noun =
+    hasProviders && hasPlugins
+      ? "CLIs and plugins"
+      : hasProviders
+        ? count === 1
+          ? "agent CLI"
+          : "agent CLIs"
+        : count === 1
+          ? "plugin"
+          : "plugins";
+  return `Update ${String(count)} ${noun}`;
+}
 
 function SidebarUpdateCardBody({
   model,
@@ -289,6 +339,7 @@ function SidebarUpdateCardBody({
   onDetails,
   onUpdateAll,
   onRestartBb,
+  onSkip,
 }: {
   model: SidebarUpdateModel;
   providers: readonly ProviderInfo[] | null;
@@ -296,9 +347,31 @@ function SidebarUpdateCardBody({
   onDetails: () => void;
   onUpdateAll: () => void;
   onRestartBb: () => void;
+  onSkip: () => void;
 }) {
   return (
     <>
+      <div className="mb-3 flex items-center gap-3 text-muted-foreground max-md:pointer-coarse:mb-4">
+        <span className="min-w-0 flex-1 truncate">
+          {sidebarUpdateButtonLabel(model)}
+        </span>
+        <Link
+          to={getSettingsRoutePath("updates")}
+          onClick={onDetails}
+          className={UPDATE_CARD_LINK_CLASS}
+        >
+          Details
+        </Link>
+        {model.updating ? null : (
+          <button
+            type="button"
+            onClick={onSkip}
+            className={UPDATE_CARD_LINK_CLASS}
+          >
+            Skip
+          </button>
+        )}
+      </div>
       {model.bb === null ? null : (
         <SidebarBbUpdateSection
           bb={model.bb}
@@ -307,42 +380,29 @@ function SidebarUpdateCardBody({
         />
       )}
       {model.bb !== null && model.rows.length > 0 ? (
-        <div className="-mx-3 my-3 border-t border-border" />
+        <div className="-mx-3 my-3 border-t border-border max-md:pointer-coarse:-mx-4" />
       ) : null}
       {model.rows.length === 0 ? null : (
-        <ul className="space-y-0.5" aria-label="Updates">
-          {model.rows.map((row) => (
-            <SidebarUpdateRowItem
-              key={row.key}
-              row={row}
-              providers={providers}
-            />
-          ))}
-        </ul>
-      )}
-      <div className="mt-3 flex gap-2">
-        <Button asChild variant="outline" size="sm" className="h-7 flex-1">
-          <Link to={getSettingsRoutePath("updates")} onClick={onDetails}>
-            Details
-          </Link>
-        </Button>
-        {model.rows.length === 0 ? null : (
+        <>
+          <ul className="space-y-0.5" aria-label="Updates">
+            {model.rows.map((row) => (
+              <SidebarUpdateRowItem
+                key={row.key}
+                row={row}
+                providers={providers}
+              />
+            ))}
+          </ul>
           <Button
             size="sm"
-            className="h-7 flex-1"
+            className={UPDATE_CARD_BUTTON_CLASS}
             disabled={model.startableCount === 0}
             onClick={onUpdateAll}
           >
-            {model.startableCount === 0
-              ? "Updating…"
-              : model.retryOnly
-                ? "Try again"
-                : model.startableCount === model.rows.length
-                  ? "Update all"
-                  : `Update ${String(model.startableCount)}`}
+            {sidebarUpdateAllLabel(model)}
           </Button>
-        )}
-      </div>
+        </>
+      )}
     </>
   );
 }
@@ -358,9 +418,9 @@ function SidebarBbUpdateSection({
 }) {
   return (
     <section aria-label="bb update">
-      <div className="flex items-center gap-1.5">
-        <BbLogo className="size-3.5" />
-        <span className="text-sm font-medium">
+      <div className="flex items-center gap-1.5 max-md:pointer-coarse:gap-2">
+        <BbLogo className={UPDATE_CARD_ICON_CLASS} />
+        <span className="text-sm font-medium max-md:pointer-coarse:text-base">
           {bb.version === null ? "bb update" : `bb ${bb.version}`}
         </span>
         {bb.currentVersion === null || bb.version === null ? null : (
@@ -369,10 +429,13 @@ function SidebarBbUpdateSection({
           </span>
         )}
       </div>
-      <div className="mt-2 flex items-center gap-1.5 text-muted-foreground">
+      <div className="mt-2 flex items-center gap-1.5 text-muted-foreground max-md:pointer-coarse:gap-2">
         <Icon
           name={bb.restarting ? "Loading" : "Clock"}
-          className={cn("size-3 shrink-0", bb.restarting && "animate-spin")}
+          className={cn(
+            "size-3 shrink-0 max-md:pointer-coarse:size-3.5",
+            bb.restarting && "animate-spin",
+          )}
         />
         <span className="min-w-0 flex-1 truncate">
           {bb.restarting
@@ -381,17 +444,20 @@ function SidebarBbUpdateSection({
               ? "Installs itself when you're idle"
               : "Installs when bb restarts"}
         </span>
-        {bb.restartLabel === null || bb.restarting ? null : (
-          <button
-            type="button"
-            disabled={restartPending}
-            onClick={onRestart}
-            className="shrink-0 cursor-pointer text-foreground underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current disabled:opacity-50"
-          >
-            {bb.restartLabel}
-          </button>
-        )}
       </div>
+      {!bb.canRestart || bb.restarting ? null : (
+        <Button
+          variant="outline"
+          size="sm"
+          className={UPDATE_CARD_BUTTON_CLASS}
+          disabled={restartPending}
+          onClick={onRestart}
+        >
+          {bb.version === null
+            ? "Restart bb now"
+            : `Restart into bb ${bb.version} now`}
+        </Button>
+      )}
     </section>
   );
 }
@@ -408,11 +474,16 @@ function SidebarUpdateRowItem({
       data-update-row={row.key}
       data-state={row.state}
       className={cn(
-        "flex h-6 items-center gap-2",
+        "flex h-6 items-center gap-2 max-md:pointer-coarse:h-8",
         row.state === "failed" && "text-muted-foreground",
       )}
     >
-      <span className="flex size-3.5 shrink-0 items-center justify-center">
+      <span
+        className={cn(
+          UPDATE_CARD_ICON_CLASS,
+          "flex shrink-0 items-center justify-center",
+        )}
+      >
         {row.kind === "provider" ? (
           <SidebarProviderMark
             providerId={row.provider}
@@ -423,7 +494,7 @@ function SidebarUpdateRowItem({
             pluginId={row.pluginId}
             icon={row.icon}
             fallbackIcon="Plug02"
-            className="size-3.5"
+            className={UPDATE_CARD_ICON_CLASS}
           />
         )}
       </span>
@@ -456,12 +527,12 @@ function SidebarProviderMark({
   const iconInfo = getProviderIconInfo("agent", providerId, provider);
   if (iconInfo === undefined) return null;
   return provider === null ? (
-    <iconInfo.icon className="size-3.5" />
+    <iconInfo.icon className={UPDATE_CARD_ICON_CLASS} />
   ) : (
     <ProviderIconMark
       provider={provider}
       icon={iconInfo.icon}
-      className="size-3.5"
+      className={UPDATE_CARD_ICON_CLASS}
     />
   );
 }

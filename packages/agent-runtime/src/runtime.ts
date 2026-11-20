@@ -9,19 +9,19 @@ import type { DynamicTool, InstructionMode, ThreadEvent } from "@bb/domain";
 import type { AdapterCommand } from "./provider-adapter.js";
 import {
   BRIDGE_JSON_RPC_ERRORS,
+  BRIDGE_NOTIFICATION_METHODS,
   commandListResultSchema,
   providerHealthResultSchema,
   providerInstallationRunResultSchema,
   providerInstallationStatusSchema,
   providerUsageResultSchema,
+  requestCancelledNotificationSchema,
   ThreadEventGrammar,
   threadIdentityResultSchema,
 } from "@bb/provider-bridge-protocol";
 import {
   JsonRpcRequestTimeoutError,
   JsonRpcResponseError,
-  PROVIDER_TOOL_CALL_CANCELLED_METHOD,
-  providerToolCallCancellationSchema,
   getJsonRpcStringParam,
   ignoredJsonRpcResultSchema,
   parseJsonRpcLine,
@@ -41,7 +41,7 @@ import {
 } from "./execution-options.js";
 import {
   handleRuntimeProviderRequest,
-  RuntimeToolCalls,
+  RuntimeProviderRequests,
   type ResolveRuntimeProviderRequestThreadIdArgs,
   type RuntimeProviderRequestKind,
 } from "./runtime-provider-requests.js";
@@ -281,7 +281,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   const idleProviderSessionSinceMsByThreadId = new Map<string, number>();
   const pendingTurnStarts = new Map<
     string,
-    { sinceMs: number; watchdogFired: boolean }
+    { clientRequestId: string; sinceMs: number; watchdogFired: boolean }
   >();
   const turnStartWatchdogThresholdMs =
     options.turnStartWatchdog?.thresholdMs ?? 120_000;
@@ -310,7 +310,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   const suppressedThreadEventIds = new Set<string>();
   const threadGoalState = new RuntimeThreadGoalState();
   const turnState = new RuntimeTurnState();
-  const toolCalls = new RuntimeToolCalls();
+  const toolCalls = new RuntimeProviderRequests();
+  const interactiveRequests = new RuntimeProviderRequests();
   const backgroundWorkState = new RuntimeBackgroundWorkState();
   const threadEventGrammar = new ThreadEventGrammar();
   const bridgeNodeEnv = defaultBridgeNodeEnv();
@@ -876,6 +877,13 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
   function observeProviderSessionIdleState(event: ThreadEvent): void {
     if (event.type === "turn/started") {
+      const pendingTurnStart = pendingTurnStarts.get(event.threadId);
+      if (pendingTurnStart !== undefined) {
+        turnState.noteActiveTurnRequest(
+          event.threadId,
+          pendingTurnStart.clientRequestId,
+        );
+      }
       pendingTurnStarts.delete(event.threadId);
       markProviderSessionNotIdle(event.threadId);
       return;
@@ -1306,15 +1314,16 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   }
 
   function handleProviderNotification(args: RuntimeParsedMessageArgs): void {
-    if (args.parsed.method === PROVIDER_TOOL_CALL_CANCELLED_METHOD) {
-      const cancellation = providerToolCallCancellationSchema.safeParse(
+    if (args.parsed.method === BRIDGE_NOTIFICATION_METHODS.requestCancelled) {
+      const cancellation = requestCancelledNotificationSchema.safeParse(
         args.parsed.params,
       );
       if (cancellation.success) {
-        toolCalls.cancel(
-          args.proc.interactiveRequestScope,
-          cancellation.data.requestId,
-        );
+        const scope = args.proc.interactiveRequestScope;
+        const { requestId } = cancellation.data;
+        if (!toolCalls.cancel(scope, requestId)) {
+          interactiveRequests.cancel(scope, requestId);
+        }
       }
       return;
     }
@@ -1376,6 +1385,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
           threadRuntimeConfigs.get(threadId)?.options,
         onInteractiveRequest: options.onInteractiveRequest,
         onToolCall: options.onToolCall,
+        interactiveRequests,
         toolCalls,
         parsedId: parsedLine.parsedId,
         parsedMethod: parsedLine.parsedMethod,
@@ -2070,6 +2080,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
           });
           assertThreadCanStartTurn(threadId);
           const pendingTurnStart = {
+            clientRequestId,
             sinceMs: Date.now(),
             watchdogFired: false,
           };
@@ -2223,6 +2234,9 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
                 threadId,
               },
             });
+            if (turnState.getActiveTurnId(threadId) === expectedTurnId) {
+              turnState.noteActiveTurnRequest(threadId, clientRequestId);
+            }
             setThreadRuntimeConfig(threadId, {
               ...currentConfig,
               contributedEnv: resolvedContributedEnv,
@@ -2438,7 +2452,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       bridgeLaunch,
       cwd,
       selectedModel,
-      contributedEnv = [],
+      contributedEnv,
     }) {
       await runtime.ensureProvider({ providerId, bridgeLaunch });
       const proc = providerProcesses.requireProviderProcess({
@@ -2466,7 +2480,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       return proc.adapter.parseModelListResult(result);
     },
 
-    async listCommands({ providerId, bridgeLaunch, cwd }) {
+    async listCommands({ providerId, bridgeLaunch, cwd, contributedEnv }) {
       await runtime.ensureProvider({ providerId, bridgeLaunch });
       const proc = providerProcesses.requireProviderProcess({
         processKey: resolveProviderProcessKey({ bridgeLaunch, providerId }),
@@ -2475,6 +2489,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       const plan = proc.adapter.buildCommandPlan({
         type: "commands/list",
         cwd,
+        envVars: resolveContributedEnvironment(
+          contributedEnv,
+          options.shellEnv,
+        ),
       });
       if (plan.kind === "noop") {
         return { commands: [] };
@@ -2486,7 +2504,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       });
     },
 
-    async providerHealth({ providerId, bridgeLaunch, cwd }) {
+    async providerHealth({ providerId, bridgeLaunch, cwd, contributedEnv }) {
       await runtime.ensureProvider({ providerId, bridgeLaunch });
       const proc = providerProcesses.requireProviderProcess({
         processKey: resolveProviderProcessKey({ bridgeLaunch, providerId }),
@@ -2495,6 +2513,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       const plan = proc.adapter.buildCommandPlan({
         type: "provider/health",
         ...(cwd !== undefined ? { cwd } : {}),
+        envVars: resolveContributedEnvironment(
+          contributedEnv,
+          options.shellEnv,
+        ),
       });
       if (plan.kind === "noop") {
         return { supported: false };
@@ -2532,6 +2554,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       cwd,
       requirement,
       checkUpdates = true,
+      contributedEnv,
     }) {
       await runtime.ensureProvider({ providerId, bridgeLaunch });
       const proc = providerProcesses.requireProviderProcess({
@@ -2545,6 +2568,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
           checkUpdates,
           ...(cwd !== undefined ? { cwd } : {}),
           ...(requirement !== undefined ? { requirement } : {}),
+          envVars: resolveContributedEnvironment(
+            contributedEnv,
+            options.shellEnv,
+          ),
         }),
         providerId,
       });
@@ -2555,7 +2582,13 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       });
     },
 
-    async providerInstallationRun({ providerId, bridgeLaunch, cwd, action }) {
+    async providerInstallationRun({
+      providerId,
+      bridgeLaunch,
+      cwd,
+      action,
+      contributedEnv,
+    }) {
       await runtime.ensureProvider({ providerId, bridgeLaunch });
       const proc = providerProcesses.requireProviderProcess({
         processKey: resolveProviderProcessKey({ bridgeLaunch, providerId }),
@@ -2567,6 +2600,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
           type: "provider/installation/run",
           action,
           ...(cwd !== undefined ? { cwd } : {}),
+          envVars: resolveContributedEnvironment(
+            contributedEnv,
+            options.shellEnv,
+          ),
         }),
         providerId,
       });
@@ -2583,6 +2620,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
     getActiveTurnId(threadId) {
       return turnState.getActiveTurnId(threadId);
+    },
+
+    getActiveTurnRequestIds(threadId) {
+      return turnState.getActiveTurnRequestIds(threadId);
     },
 
     waitForActiveTurn(threadId, args) {

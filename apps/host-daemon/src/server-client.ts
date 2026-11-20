@@ -7,11 +7,15 @@ import {
   hostDaemonEventBatchResponseSchema,
   hostDaemonInteractiveInterruptResponseSchema,
   hostDaemonInteractiveRequestResponseSchema,
+  hostDaemonInteractiveWithdrawResponseSchema,
   hostDaemonSessionOpenResponseSchema,
   hostDaemonSkillTreeManifestSchema,
   hostDaemonToolCallResponseSchema,
   type HostDaemonInteractiveInterruptResponse,
+  type HostDaemonInteractiveRequestKey,
   type HostDaemonInteractiveRequestResponse,
+  type HostDaemonInteractiveWithdrawRequest,
+  type HostDaemonInteractiveWithdrawResponse,
   type HostDaemonActiveThread,
   type HostDaemonOpenThreadWork,
   type HostDaemonEventBatchRequest,
@@ -193,6 +197,7 @@ interface OpenSessionArgs {
   dataDir: string;
   instanceId: string;
   localApiPort: number | null;
+  turnCommandThreadIds: string[];
   activeThreads: HostDaemonActiveThread[] | Promise<HostDaemonActiveThread[]>;
   openThreadWork: HostDaemonOpenThreadWork[];
   undeliveredEventThreadIds: string[];
@@ -231,6 +236,10 @@ export interface ServerClient {
     reason: string;
     threadIds: readonly string[];
   }): Promise<HostDaemonInteractiveInterruptResponse>;
+  withdrawInteractiveRequest(args: {
+    reason: string;
+    request: HostDaemonInteractiveRequestKey;
+  }): Promise<HostDaemonInteractiveWithdrawResponse>;
 }
 
 const INTERACTIVE_REQUEST_REGISTRATION_RETRIES = 5;
@@ -379,6 +388,7 @@ export function createServerClient(
         dataDir: args.dataDir,
         localApiPort: args.localApiPort,
         protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
+        turnCommandThreadIds: args.turnCommandThreadIds,
         activeThreads: await args.activeThreads,
         openThreadWork: args.openThreadWork,
         undeliveredEventThreadIds: args.undeliveredEventThreadIds,
@@ -624,6 +634,35 @@ export function createServerClient(
       }
 
       return hostDaemonInteractiveInterruptResponseSchema.parse(
+        await response.json(),
+      );
+    },
+
+    async withdrawInteractiveRequest(
+      args,
+    ): Promise<HostDaemonInteractiveWithdrawResponse> {
+      const payload: HostDaemonInteractiveWithdrawRequest = {
+        sessionId: requireSessionId(),
+        request: args.request,
+        reason: args.reason,
+      };
+      const response = await fetchFn(
+        buildInternalUrl("/session/interactive-request/withdraw"),
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify(payload),
+        },
+      );
+
+      if (!response.ok) {
+        throw await createResponseError(
+          "withdraw interactive request",
+          response,
+        );
+      }
+
+      return hostDaemonInteractiveWithdrawResponseSchema.parse(
         await response.json(),
       );
     },

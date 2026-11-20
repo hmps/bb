@@ -1,5 +1,6 @@
 import { rejectMultipleWorkspaceSelectors } from "./shared.js";
 import { z } from "zod";
+import { operationResponseSchema } from "./operation.js";
 import {
   aiServiceSelectionSchema,
   aiServiceSelectionsSchema,
@@ -103,6 +104,18 @@ export const systemProvidersQuerySchema = z
   .partial()
   .superRefine(rejectMultipleWorkspaceSelectors);
 export type SystemProvidersQuery = z.infer<typeof systemProvidersQuerySchema>;
+
+export const systemProviderStatesQuerySchema = z
+  .object({
+    ...systemProviderHostQueryFields,
+    capability: z.enum(["usage"]),
+    providerId: z.string().min(1),
+  })
+  .partial()
+  .superRefine(rejectMultipleWorkspaceSelectors);
+export type SystemProviderStatesQuery = z.infer<
+  typeof systemProviderStatesQuerySchema
+>;
 
 export const systemExecutionOptionsQuerySchema = z
   .object({
@@ -320,6 +333,7 @@ export const recordTelemetryEventRequestSchema = z.discriminatedUnion("name", [
           succeeded_count: z.number().int().nonnegative().optional(),
           timed_out: z.boolean().optional(),
           unreadable_count: z.number().int().nonnegative().optional(),
+          duration_ms: z.number().int().nonnegative().optional(),
           failure_reason: onboardingFailureReasonTelemetrySchema.optional(),
           failure_stage: z.enum(["sign_in", "pairing", "turn_on"]).optional(),
           failure_detail: onboardingFailureDetailTelemetrySchema.optional(),
@@ -478,11 +492,8 @@ export type RecordTelemetryEventRequest = z.infer<
   typeof recordTelemetryEventRequestSchema
 >;
 
-export const setupGuideVariantSchema = z.enum(["control", "new"]);
-export type SetupGuideVariant = z.infer<typeof setupGuideVariantSchema>;
-
 export const systemSetupGuideResponseSchema = z.object({
-  variant: setupGuideVariantSchema,
+  variant: z.literal("new"),
 });
 export type SystemSetupGuideResponse = z.infer<
   typeof systemSetupGuideResponseSchema
@@ -717,9 +728,7 @@ export type SystemAppUpdateAcknowledgeRequest = z.infer<
   typeof systemAppUpdateAcknowledgeRequestSchema
 >;
 
-export const systemConfigReloadResponseSchema = z.object({
-  ok: z.literal(true),
-});
+export const systemConfigReloadResponseSchema = operationResponseSchema;
 
 export const cliSkillMachineStatusSchema = z.enum([
   "installed",

@@ -70,6 +70,7 @@ import type {
   StandardSchemaV1Issue,
   StandardSchemaV1Result,
 } from "../rpc-contract.js";
+import { sliceUtf16Head } from "@bb/text-utils";
 
 /**
  * Shared registration policy for the real plugin host and the in-process fake.
@@ -2842,10 +2843,9 @@ export function runPluginStorageMigrations(
     database.exec("ALTER TABLE _bb_migrations ADD COLUMN statement_hash TEXT");
   }
   const rows = database
-    .prepare<
-      [],
-      { id: number; statement_hash: string | null }
-    >("SELECT id, statement_hash FROM _bb_migrations ORDER BY id")
+    .prepare<[], { id: number; statement_hash: string | null }>(
+      "SELECT id, statement_hash FROM _bb_migrations ORDER BY id",
+    )
     .all();
   const applied = new Map<number, string | null>();
   for (const row of rows) applied.set(row.id, row.statement_hash);
@@ -3374,22 +3374,19 @@ export function normalizeInteractionRequest(
       `ui.requestInput title must be 1-${PLUGIN_INTERACTION_MAX_TITLE_LENGTH} characters`,
     );
   }
-  let payload: JsonValue;
+  let json: string | undefined;
   try {
-    const json = JSON.stringify(request.payload);
-    if (json === undefined) throw new Error();
-    if (
-      Buffer.byteLength(json, "utf8") > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES
-    ) {
-      throw new Error("ui.requestInput payload exceeds 64 KiB");
-    }
-    payload = JSON.parse(json) as JsonValue;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("64 KiB")) {
-      throw error;
-    }
+    json = JSON.stringify(request.payload);
+  } catch {
     throw new Error("ui.requestInput payload must be JSON-serializable");
   }
+  if (json === undefined) {
+    throw new Error("ui.requestInput payload must be JSON-serializable");
+  }
+  if (Buffer.byteLength(json, "utf8") > PLUGIN_INTERACTION_MAX_PAYLOAD_BYTES) {
+    throw new Error("ui.requestInput payload exceeds 64 KiB");
+  }
+  const payload = JSON.parse(json) as JsonValue;
   const timeoutMs = request.timeoutMs ?? 10 * 60 * 1000;
   if (
     !Number.isInteger(timeoutMs) ||
@@ -3630,7 +3627,10 @@ export function normalizePluginAgentConfiguration(args: {
   const instructions =
     typeof output.instructions === "string" &&
     output.instructions.trim().length > 0
-      ? output.instructions.slice(0, PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS)
+      ? sliceUtf16Head(
+          output.instructions,
+          PLUGIN_DYNAMIC_INSTRUCTIONS_MAX_CHARS,
+        )
       : null;
   const toolSelections = normalizePluginAgentToolSelections({
     knownIds: args.knownToolIds,

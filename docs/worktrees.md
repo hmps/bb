@@ -45,8 +45,10 @@ pnpm bb thread spawn \
   --prompt "..."
 ```
 
-Omit `--base-branch` for bb's smart default. Explicit values are exact:
-`main` is local and `origin/main` is remote.
+Omit `--base-branch` for bb's smart default. A bare name such as `main` uses
+`origin/main` when the local branch is equal to it or behind it, and the local
+branch when it is ahead or has diverged. `origin/main` and full refs such as
+`refs/heads/main` are used exactly as given.
 
 New worktree branches start at the selected base without tracking it as an
 upstream, even when Git's `branch.autoSetupMerge` is enabled. Publish with
@@ -110,6 +112,9 @@ pnpm install
 Contract:
 
 - The script runs with `env bash`, working directory set to the new worktree.
+- It gets the daemon's sanitized environment overlaid with your login shell's
+  environment (including its `PATH`), plus the variables you configured for the
+  machine and project. Teardown gets the same environment.
 - stdin is closed. stdout and stderr stream into the thread's provisioning
   transcript in the app.
 - A non-zero exit, a signal, or a timeout (15 minutes) fails provisioning and

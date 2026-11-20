@@ -179,6 +179,16 @@ describe("client telemetry events", () => {
             entry: "first_run",
             step: "agent",
             operation: "load",
+            outcome: "succeeded",
+            duration_ms: 4200,
+          },
+        },
+        {
+          name: "onboarding_operation",
+          properties: {
+            entry: "first_run",
+            step: "agent",
+            operation: "load",
             outcome: "failed",
             failure_reason: "timed_out",
           },
@@ -287,7 +297,10 @@ describe("client telemetry events", () => {
         capture.mockClear();
         const response = await post(harness, event);
         expect(response.status).toBe(200);
-        await expect(readJson(response)).resolves.toEqual({ ok: true });
+        await expect(readJson(response)).resolves.toEqual({
+          ok: true,
+          progress: "complete",
+        });
         expect(capture).toHaveBeenCalledExactlyOnceWith(event);
       }
     });
@@ -395,7 +408,10 @@ describe("client telemetry events", () => {
         capture.mockClear();
         const response = await post(harness, event);
         expect(response.status).toBe(200);
-        await expect(readJson(response)).resolves.toEqual({ ok: true });
+        await expect(readJson(response)).resolves.toEqual({
+          ok: true,
+          progress: "complete",
+        });
         expect(capture).toHaveBeenCalledExactlyOnceWith(event);
       }
     });
@@ -473,6 +489,16 @@ describe("client telemetry events", () => {
             operation: "scan",
             outcome: "succeeded",
             unreadable_count: -1,
+          },
+        },
+        {
+          name: "onboarding_operation",
+          properties: {
+            entry: "first_run",
+            step: "agent",
+            operation: "load",
+            outcome: "succeeded",
+            duration_ms: -1,
           },
         },
         {

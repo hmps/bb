@@ -1,6 +1,6 @@
 import type { ServerAccessStatus } from "@bb/server-contract";
 import { isLocalOnlyUrl } from "@/lib/loopback-hostname";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@bb/shared-ui/button";
 import { getPluginConfigurationRoutePath } from "@/lib/route-paths";
@@ -13,6 +13,7 @@ import { useUpdateGeneralSettings } from "@/hooks/mutations/settings-mutations";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
 import { SettingsWithControl } from "@/components/ui/settings-section";
 import { machineServerAccessBlockedReason } from "@/components/machines/machine-server-access";
+import { isNonImeKey } from "@bb/shared-ui/lib/ime-keyboard";
 
 function parseUrl(value: string): URL | null {
   try {
@@ -50,9 +51,9 @@ function useMachineAccess(): MachineAccessState {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(
     null,
   );
-  useEffect(() => {
-    if (selectedProviderId === savedProviderId) setSelectedProviderId(null);
-  }, [savedProviderId, selectedProviderId]);
+  if (selectedProviderId !== null && selectedProviderId === savedProviderId) {
+    setSelectedProviderId(null);
+  }
   const selected = selectedProviderId ?? savedProviderId;
   const effective = access?.providers.find(
     (provider) => provider.id === selected,
@@ -100,8 +101,9 @@ function useMachineAccess(): MachineAccessState {
           return;
         }
       }
+      const machineServerUrl = url || null;
       try {
-        await update.mutateAsync({ machineServerUrl: url || null });
+        await update.mutateAsync({ machineServerUrl });
       } catch (saveError) {
         setError(
           getMutationErrorMessage({
@@ -303,7 +305,7 @@ function MachineAccessDetails({
               disabled={disabled}
               onChange={(event) => machineAccess.editDraft(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") void machineAccess.commitUrl();
+                if (isNonImeKey(event, "Enter")) void machineAccess.commitUrl();
               }}
             />
             <Button

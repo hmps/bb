@@ -1,6 +1,5 @@
 import { AppPanelTabsPublisher } from "@/lib/app-panel-tabs";
 import {
-  getThreadFixedTabOwnerId,
   useAppPanelController,
   useSetFixedTabTarget,
 } from "@/lib/app-fixed-tab-navigation";
@@ -10,7 +9,6 @@ import {
   usePluginPanelActions,
 } from "@/components/plugin/PluginPanelActions";
 import { useAppCommandHandler } from "@/components/commands/AppCommandProvider";
-import { GIT_DIFF_TAB_REFERENCE } from "@/lib/git-diff-tab";
 import { useEnvironmentCheckoutDisplay } from "@/hooks/queries/git-plugin-queries";
 import {
   useThreadFixedTabs,
@@ -34,11 +32,10 @@ import { useImmediateRouteNavigate } from "@/components/ui/app-route-anchor";
 import { useAtom } from "jotai";
 import { useDesktopBrowserReveal } from "@/lib/use-desktop-browser-reveal";
 import {
+  type ThreadTimelineConsumerMessageAction,
   type ThreadTimelineForkMessageHandler,
   type ThreadTimelineLinkHandler,
   type ThreadTimelineLocalFileLink,
-  type TimelineTitleActionResolver,
-  useThreadTimelineController,
 } from "@/components/thread/timeline";
 import { ThreadProviderContext } from "@/components/thread/thread-provider-context";
 import { type ThreadListEntry } from "@bb/domain";
@@ -77,7 +74,6 @@ import {
   formatEnvironmentDisplay,
   type EnvironmentDisplayHostContext,
 } from "@bb/core-ui";
-import { assertNever } from "@bb/thread-view";
 import { useCreateThreadInEnvironment } from "@/hooks/useCreateThreadInEnvironment";
 import { useHostDaemon } from "@/hooks/useHostDaemon";
 import { useLiveFileOpenTargets } from "@/hooks/useLiveFileOpenTargets";
@@ -85,6 +81,10 @@ import type { LiveFileRoot } from "@/hooks/useResolvedLiveFileTarget";
 import { selectHosts, useHosts } from "@/hooks/queries/host-queries";
 import { useConnectionAwareQueryState } from "@/hooks/queries/connection-aware-query-state";
 import { useThreadTerminals } from "@/hooks/queries/thread-terminal-queries";
+import {
+  useThreadTimelineProvisioningFailure,
+  useThreadTimelineSubscription,
+} from "@/hooks/queries/thread-panel-queries";
 import { usePanelBrowser } from "@/components/secondary-panel/usePanelBrowser";
 import { usePanelFiles } from "@/components/secondary-panel/usePanelFiles";
 import { usePanelTerminals } from "@/components/secondary-panel/usePanelTerminals";
@@ -97,7 +97,6 @@ import { useSystemEnvironmentProviders } from "@/hooks/queries/environment-provi
 import { useSystemMachineProviders } from "@/hooks/queries/machine-provider-queries";
 import { resolveAbsoluteFilePath } from "@bb/shared-ui/lib/absolute-file-path";
 import { getThreadDisplayTitle } from "@/lib/thread-title";
-import { hasThreadProvisioningFailure } from "@/lib/thread-provisioning-failure";
 import {
   getProjectComposeRoutePath,
   type ThreadRoutePathArgs,
@@ -134,26 +133,28 @@ import {
   LazyThreadTerminalPanel,
   LazyWorkspaceFilePreviewTabContent,
 } from "@/components/secondary-panel/lazySecondaryPanelComponents";
-import {
-  SIDE_CHAT_PLUGIN_ID,
-  SIDE_CHAT_PLUGIN_PANEL_ACTION_ID,
-} from "@/lib/side-chat-plugin";
 import { usePanelTabPresenter } from "@/components/secondary-panel/usePanelTabPresenter";
 import { createFileOpenerOriginalTab } from "@/components/plugin/file-opener-tabs";
 import { ThreadTimelineNavigationProvider } from "@/components/thread/timeline/ThreadTimelineNavigationContext";
+import {
+  resolveThreadEnvironmentAccess,
+  useThreadTimelineTitleActions,
+} from "./thread-screen-hosts";
 import {
   AttachmentOpenerContext,
   type OpenAttachmentRequest,
 } from "@/components/secondary-panel/AttachmentOpenerContext";
 import { SelectionAddToChatContext } from "@/components/thread/SelectionAddToChatContext";
-import { usePluginSlots } from "@/lib/plugin-slots";
+import { usePluginSlotKind } from "@/lib/plugin-slots";
 import { getFileExtension } from "@/lib/plugin-slot-resolvers";
 import { Icon } from "@bb/shared-ui/icon";
 import { getBbDesktopInfo, isDesktopBrowserAvailable } from "@/lib/bb-desktop";
 import { UrlOpenRoutingProvider } from "@/lib/url-open-routing";
 import {
-  AppNavigationHostProvider,
+  AppNavigationHostCapture,
+  AppNavigationSurfaceProvider,
   useAppNavigationHost,
+  useAppNavigationHostRef,
 } from "@/lib/app-navigation-host";
 import { getFileBasename } from "@/lib/live-file-navigation";
 import {
@@ -198,7 +199,6 @@ import {
   useUpdateFixedPanelTabsState,
 } from "@/lib/fixed-panel-tabs";
 import type { SecondaryFileFixedPanelTab } from "@/lib/fixed-panel-tabs-state";
-import { resolveGitDiffTabStatus } from "@/components/secondary-panel/gitDiffTabEligibility";
 import { isRootThread } from "./threadParentSelectorOptions";
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { usePointerCoarse } from "@bb/shared-ui/hooks/use-pointer-coarse";
@@ -217,6 +217,8 @@ const EMPTY_PROJECT_THREAD_SUBSET_FILTERS =
 const EMPTY_TERMINAL_SESSIONS: readonly TerminalSession[] = [];
 const THREAD_HEADER_ACTIONS_GROUP = "0_header";
 const THREAD_DETAIL_SCREEN_PRESENTATION = { kind: "page" } as const;
+const NO_CONSUMER_MESSAGE_ACTIONS: readonly ThreadTimelineConsumerMessageAction[] =
+  [];
 
 type OpenFilePreviewHandler = (relativePath: string) => void;
 
@@ -302,25 +304,16 @@ function ThreadDetailViewInternal(
     staleTime: 5_000,
   });
   const environment = environmentQuery.data;
-  const hostLifecycle =
-    environment === undefined || environment.hostLifecycle === "active"
-      ? null
-      : environment.hostLifecycle;
-  const executionUnavailable =
-    hostLifecycle !== null || environment?.status === "destroyed";
-  const gitDiffTabStatus = resolveGitDiffTabStatus({
-    environmentId: thread?.environmentId ?? null,
-    environmentIsGitRepo: environment?.isGitRepo,
+  const {
+    executionUnavailable,
+    gitDiffTabStatus,
+    contextEnvironmentId: threadEnvironmentId,
+    reusesEnvironment,
+  } = resolveThreadEnvironmentAccess({
+    thread: thread ?? null,
+    environment: environment ?? null,
     environmentLoadFailed: environmentQuery.isError,
-    environmentOwnsPath: environment?.managed,
-    hasResolvedThread: thread !== undefined,
-    threadArchived: thread?.archivedAt != null || executionUnavailable,
   });
-  const canUseGitUi = !executionUnavailable && gitDiffTabStatus === "eligible";
-  const threadEnvironmentId =
-    canUseGitUi && environment !== undefined && thread?.environmentId
-      ? thread.environmentId
-      : null;
   const threadTabEnvironmentId = thread?.environmentId ?? null;
   const threadTabEnvironment = useMemo(
     () =>
@@ -435,10 +428,8 @@ function ThreadDetailViewInternal(
   });
   const openBrowser = panelBrowser.open;
   const openBrowserUrl = panelBrowser.openUrl;
-  const {
-    fileOpeners: pluginFileOpeners,
-    threadPanelActions: registeredThreadActions,
-  } = usePluginSlots();
+  const pluginFileOpeners = usePluginSlotKind("fileOpeners");
+  const registeredThreadActions = usePluginSlotKind("threadPanelActions");
   useThreadOpenFileSignal({
     threadId,
     environmentId: thread?.environmentId,
@@ -446,12 +437,13 @@ function ThreadDetailViewInternal(
   });
   const browserDeckThreadId = thread?.id ?? null;
   const browserDeckEnvironmentId = thread?.environmentId ?? null;
+  const selectedBrowserTabId = activeBrowserTab?.id ?? null;
   const renderBrowserDeck = useCallback(
     ({
       canHandleBrowserCommands,
       canShowNativeBrowserView,
       onNativeFocus,
-      activeBrowserTabId = activeBrowserTab?.id ?? null,
+      activeBrowserTabId = selectedBrowserTabId,
     }: {
       canHandleBrowserCommands?: boolean;
       canShowNativeBrowserView: boolean;
@@ -480,7 +472,7 @@ function ThreadDetailViewInternal(
       );
     },
     [
-      activeBrowserTab?.id,
+      selectedBrowserTabId,
       panelBrowser.addressFocusRequest,
       browserTabs,
       browserDeckEnvironmentId,
@@ -525,19 +517,21 @@ function ThreadDetailViewInternal(
         : EMPTY_PARENT_THREADS,
     [parentThreadSubsetQuery.data, shouldLoadParentThreads],
   );
+  const loadedThreadId = thread?.id;
   const handleParentSelectorOpenChange = useCallback(
     (open: boolean) => {
-      if (open && thread?.id) {
-        setParentThreadsRequestedForThreadId(thread.id);
+      if (open && loadedThreadId) {
+        setParentThreadsRequestedForThreadId(loadedThreadId);
       }
     },
-    [thread?.id],
+    [loadedThreadId],
   );
   const handleRetryParentThreads = parentThreadSubsetQuery.retry;
-  const timeline = useThreadTimelineController({
+  useThreadTimelineSubscription(threadId, { enabled: timelineEnabled });
+  const environmentProvisioningFailure = useThreadTimelineProvisioningFailure(
     threadId,
-    enabled: timelineEnabled,
-  });
+    thread?.status === "error" && thread.environmentId === null,
+  );
   const updateThread = useUpdateThread({
     errorMessage: "Failed to assign parent thread.",
   });
@@ -750,14 +744,14 @@ function ThreadDetailViewInternal(
     activeTabId: isSecondaryPanelOpen ? activeFixedSecondaryTabId : null,
     close: closeWorkspacePanel,
     destinations: panelDestinations,
-    isFocused,
   });
   const toggleSecondaryPanel = useCallback(() => {
     if (isSecondaryPanelOpen) panel.close();
     else toggleWorkspacePanel();
   }, [isSecondaryPanelOpen, panel, toggleWorkspacePanel]);
+  const surfaceHost = useAppNavigationHostRef();
   const pluginPanelActions = usePluginPanelActions({
-    panel,
+    hostRef: surfaceHost,
     threadId,
     environmentId: threadTabEnvironmentId,
     actions: threadFixedTabs.actions,
@@ -767,15 +761,6 @@ function ThreadDetailViewInternal(
       panel.openTab({
         tab: THREAD_INFO_FIXED_TAB_REFERENCE,
         availability: "fixed",
-      }),
-    [panel],
-  );
-  const openSecondaryPanelDiffFile = useCallback(
-    (path: string) =>
-      panel.openTab({
-        tab: GIT_DIFF_TAB_REFERENCE,
-        availability: "fixed",
-        target: { kind: "file", path },
       }),
     [panel],
   );
@@ -1104,30 +1089,15 @@ function ThreadDetailViewInternal(
     ({ href }) => openBrowserUrl(href),
     [openBrowserUrl],
   );
-  const handleTimelineTitleAction = useCallback<TimelineTitleActionResolver>(
-    (action) => {
-      switch (action.kind) {
-        case "open-file-diff":
-          return () => {
-            openSecondaryPanelDiffFile(action.path);
-          };
-        case "open-plugin-side-chat":
-          return () => {
-            panel.openTab({
-              tab: {
-                ownerId: getThreadFixedTabOwnerId(SIDE_CHAT_PLUGIN_ID),
-                tabId: SIDE_CHAT_PLUGIN_PANEL_ACTION_ID,
-              },
-              availability: "action",
-              params: { threadId: action.threadId, sourceThreadId: threadId },
-            });
-          };
-        default:
-          return assertNever(action);
-      }
-    },
-    [openSecondaryPanelDiffFile, panel, threadId],
-  );
+  const handleTimelineTitleAction = useThreadTimelineTitleActions({
+    threadId,
+    projectId,
+    openThread: navigateInPane,
+    environmentId: thread?.environmentId ?? null,
+    panel,
+    openFilePreview: openLiveFilePreview,
+    openLocalFileLink: handleOpenTimelineLocalFileLink,
+  });
   const metadataStorage = useMemo(
     () =>
       resolvedThreadEnvironmentHost?.status === "connected"
@@ -1320,24 +1290,25 @@ function ThreadDetailViewInternal(
       pluginFileOpeners,
     ],
   );
+  const loadedThreadEnvironmentId = thread?.environmentId;
   const handleOpenFilePreview = useCallback<OpenFilePreviewHandler>(
     (relativePath) => {
       if (
-        thread?.environmentId === null ||
-        thread?.environmentId === undefined
+        loadedThreadEnvironmentId === null ||
+        loadedThreadEnvironmentId === undefined
       ) {
         return;
       }
       openLiveFilePreview({
         target: {
           kind: "workspace",
-          environmentId: thread.environmentId,
+          environmentId: loadedThreadEnvironmentId,
           path: relativePath,
         },
         location: null,
       });
     },
-    [openLiveFilePreview, thread?.environmentId],
+    [openLiveFilePreview, loadedThreadEnvironmentId],
   );
 
   if (threadQueryState.status === "loading") {
@@ -1358,10 +1329,6 @@ function ThreadDetailViewInternal(
   }
   const canAssignToParent = isThreadRoot;
   const canTakeOverThread = Boolean(thread.parentThreadId);
-  const environmentProvisioningFailure =
-    thread.status === "error" && thread.environmentId === null
-      ? hasThreadProvisioningFailure(timeline.timelineRows)
-      : false;
   const threadEnvironmentProviderLookup = findEnvironmentDisplayProvider(
     registeredEnvironmentProviders,
     environment?.environmentProviderId ?? null,
@@ -1382,15 +1349,8 @@ function ThreadDetailViewInternal(
         machineProviders: registeredMachineProviders,
       })
     : undefined;
-  const isThreadOnReusableEnvironment =
-    !executionUnavailable &&
-    environment !== undefined &&
-    environment.status === "ready" &&
-    environment.path !== null;
   const onCreateNewThreadInEnvironment =
-    isThreadOnReusableEnvironment && projectId && thread.environmentId !== null
-      ? createThreadInEnvironment
-      : undefined;
+    reusesEnvironment && projectId ? createThreadInEnvironment : null;
   const threadTitle = getThreadDisplayTitle(thread);
   const responsiveWorkspaceActions: PluginThreadActionsInlineItem[] =
     workspaceOpenPath && preferredDirectoryTarget
@@ -1425,7 +1385,9 @@ function ThreadDetailViewInternal(
       : [];
   const threadActionTarget = toThreadActionTarget(
     thread,
-    isThreadOnReusableEnvironment && thread.environmentId !== null
+    reusesEnvironment &&
+      thread.environmentId !== null &&
+      environment?.path != null
       ? { id: thread.environmentId, path: environment.path }
       : null,
   );
@@ -1531,6 +1493,7 @@ function ThreadDetailViewInternal(
         environmentCheckout: threadCheckoutDisplay,
         environmentChrome: composerEnvironmentChrome,
         contextEnvironmentId: threadEnvironmentId,
+        focusRequest: null,
         onCreateNewThreadInEnvironment,
         onOpenThreadInfo: openThreadInfo,
         permissionPolicy: "editable",
@@ -1540,11 +1503,13 @@ function ThreadDetailViewInternal(
       projectId={projectId}
       resolveMentionLink={resolveMentionLink}
       thread={thread}
-      timeline={timeline}
+      timelineEnabled={timelineEnabled}
       timelineHost={{
         environmentHostName: threadEnvironmentHost?.name ?? null,
-        includePluginMessageActions: true,
-        onForkMessage: isForkAvailable ? handleForkMessage : undefined,
+        consumerMessageActions: NO_CONSUMER_MESSAGE_ACTIONS,
+        leadingContent: null,
+        messageActionSurface: "thread-view",
+        onForkMessage: isForkAvailable ? handleForkMessage : null,
         onTitleAction: handleTimelineTitleAction,
         unreadDividerAutoScroll: unreadDividerState.autoScroll,
         unreadDividerPlacement: unreadDividerState.placement,
@@ -1714,7 +1679,11 @@ function ThreadDetailViewInternal(
         workspaceRootPath={environment?.path ?? undefined}
       >
         <UrlOpenRoutingProvider openInAppBrowser={openBrowser}>
-          <AppNavigationHostProvider capabilities={appNavigationCapabilities}>
+          <AppNavigationSurfaceProvider
+            capabilities={appNavigationCapabilities}
+            isFocused={isFocused}
+          >
+            <AppNavigationHostCapture hostRef={surfaceHost} />
             <AppPanelTabsPublisher
               publish={panel.publishTabs}
               activeTabId={activeFixedSecondaryTabId}
@@ -1790,7 +1759,7 @@ function ThreadDetailViewInternal(
                 onPanelFocus: touchFixedPanelTabsState,
               }}
             />
-          </AppNavigationHostProvider>
+          </AppNavigationSurfaceProvider>
         </UrlOpenRoutingProvider>
       </ThreadTimelineNavigationProvider>
     </MarkdownLocalFileContextMenuContext.Provider>

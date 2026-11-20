@@ -1,9 +1,14 @@
 import { pluginCommandId } from "@bb/domain";
-import type { PluginComposerApi } from "@get-bb/plugin-sdk";
+import type {
+  ExperimentalPluginActionContext,
+  PluginComposerApi,
+} from "@get-bb/plugin-sdk";
+import { useAppNavigationHost } from "@/lib/app-navigation-host";
+import { useBindPluginActionContext } from "@/lib/plugin-action-context-provider";
 import { useComposerCommand } from "@/components/promptbox/composer-commands";
 import { useComposer } from "@/lib/plugin-sdk-hooks";
 import {
-  usePluginSlots,
+  usePluginSlotKind,
   type PluginCommandPaletteActionSlot,
 } from "@/lib/plugin-slots";
 import { PluginSlotMount } from "./PluginSlotMount";
@@ -14,7 +19,7 @@ type ComposerCommandSlot = Extract<
 >;
 
 export function PluginComposerCommands() {
-  const { commandPaletteActions } = usePluginSlots();
+  const commandPaletteActions = usePluginSlotKind("commandPaletteActions");
   return commandPaletteActions.map((command) =>
     command.target === "composer" ? (
       <PluginSlotMount
@@ -33,6 +38,7 @@ export function PluginComposerCommands() {
 function runComposerCommand(
   command: ComposerCommandSlot,
   composer: PluginComposerApi,
+  actionContext: ExperimentalPluginActionContext,
 ): void {
   const warn = (error: unknown) => {
     console.warn(
@@ -40,7 +46,7 @@ function runComposerCommand(
     );
   };
   try {
-    const result = command.run({ composer });
+    const result = command.run({ ...actionContext, composer });
     if (result instanceof Promise) result.catch(warn);
   } catch (error) {
     warn(error);
@@ -53,8 +59,14 @@ function PluginComposerCommandHandler({
   command: ComposerCommandSlot;
 }) {
   const composer = useComposer();
+  const bind = useBindPluginActionContext();
+  const host = useAppNavigationHost();
   useComposerCommand(pluginCommandId(command.pluginId, command.id), () =>
-    runComposerCommand(command, composer),
+    runComposerCommand(
+      command,
+      composer,
+      bind(command.pluginId, () => host),
+    ),
   );
   return null;
 }

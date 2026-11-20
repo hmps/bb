@@ -134,6 +134,12 @@ export function dropThreadStatusChangedAtColumn(db: DbConnection): void {
   }
 }
 
+export function dropThreadRunStateTables(db: DbConnection): void {
+  db.$client.exec(
+    "DROP TABLE IF EXISTS thread_turn_requests; DROP TABLE IF EXISTS thread_run_states;",
+  );
+}
+
 export function dropPluginFailureLabelColumns(db: DbConnection): void {
   for (const [table, column] of [
     ["plugins", "last_failure_label"],
@@ -145,6 +151,30 @@ export function dropPluginFailureLabelColumns(db: DbConnection): void {
     if (columns.some((existing) => existing.name === column)) {
       db.$client.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
     }
+  }
+}
+
+export function rewindMachineTeardownRecoveryColumns(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], { name: string }>("PRAGMA table_info(hosts)")
+    .all();
+  const names = new Set(columns.map((existing) => existing.name));
+  if (names.has("teardown_blocked_by_environment_id")) {
+    db.$client.exec(
+      "ALTER TABLE hosts DROP COLUMN teardown_blocked_by_environment_id",
+    );
+  }
+  if (names.has("remove_retry_at") && !names.has("suspend_retry_at")) {
+    db.$client.exec("ALTER TABLE hosts ADD COLUMN suspend_retry_at integer");
+  }
+}
+
+export function dropPluginMarketplaceEnabledColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], { name: string }>("PRAGMA table_info(plugin_marketplaces)")
+    .all();
+  if (columns.some((column) => column.name === "enabled")) {
+    db.$client.exec("ALTER TABLE plugin_marketplaces DROP COLUMN enabled");
   }
 }
 

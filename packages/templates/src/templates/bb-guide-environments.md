@@ -119,10 +119,11 @@ Making your repo work with bb:
   bb environment delete <id>              Request provider cleanup; refused while threads are
                                           live or stopping. The command returns with cleanup
                                           requested; lifecycle becomes destroyed only after
-                                          provider removal completes
+                                          provider removal completes. Unarchiving one of its
+                                          threads before removal starts cancels the request
   bb environment cleanup <id>             Remove an unused provider-managed environment now
     --recover                             After inspection, acknowledge interrupted hooks and
-                                          retry failed cleanup (Linux same-user process guard)
+                                          retry failed cleanup (Linux and macOS same-user process guard)
   bb environment show <id>                Show environment details (path, branch, status, lifecycle, retirement deadline and teardown attempts)
 
   bb environment paths <id>               Search workspace paths
@@ -155,7 +156,8 @@ Making your repo work with bb:
   worktree first if you want to keep them. Deleting the last thread, or an
   explicit environment or project deletion, skips the grace (including a
   never-retire policy). Failed teardown retries after 1, 2, 4, and 8 minutes, then stops after
-  five failed attempts with a "Needs recovery" message;
+  five failed attempts with a "Needs recovery" message and
+  `lifecycle.teardown.needsRecovery` set to true;
   `bb environment show <id>` reports the lifecycle phase, deadline, teardown
   attempt, and failure message.
 
@@ -163,21 +165,27 @@ Making your repo work with bb:
   to remove an unused provider-managed environment early. It is not a routine
   end-of-task step. It rejects live threads and unmanaged environments,
   succeeds if already removed, and completes asynchronously. It cannot bypass
-  "Needs recovery"; `bb environment list` includes the failure message.
+  "Needs recovery": it fails with `environment_needs_recovery` (HTTP 409), and
+  `bb environment list` includes the failure message.
 
   `bb environment cleanup <id> --recover [--json]` is an explicit acknowledgement
   after inspecting a failed environment. It marks interrupted hooks finished,
-  resets the retry budget, and retries removal. It also handles interrupted
+  resets the retry budget, and retries removal; it exits non-zero
+  (`environment_teardown_failed`) when that removal fails again. It also handles interrupted
   setup without a recorded hook operation. A teardown hook that never started
   still runs. A daemon reboot alone never proves a detached hook has stopped.
 
-  Recovery currently requires Linux. It refuses while a setup/hook is still
-  active, while any process owned by the daemon UID has its cwd or a mapped
-  file path under the workspace, or while any such process cannot be inspected.
-  The guard compares paths, including deleted paths, rather than shared inode
-  identity. It does not kill processes. Processes owned by other users require
-  separate inspection before recovery. Stop or move your own workspace users
-  first. Unsupported platforms and unavailable daemons refuse recovery.
+  Recovery requires a Linux or macOS host. It refuses while a setup/hook is
+  still active, while any process owned by the daemon UID has its cwd or a
+  mapped file path under the workspace, or while any such process cannot be
+  inspected. Linux reads `/proc`; macOS uses `lsof` and refuses recovery if
+  `lsof` is missing or fails. On macOS, an uninspectable setuid process that
+  runs under another effective UID, such as the `login` process behind each
+  terminal tab, counts as another user's process. The guard compares paths,
+  including deleted paths, rather than shared inode identity. It does not kill
+  processes. Processes owned by other users require separate inspection before
+  recovery. Stop or move your own workspace users first. Windows hosts and
+  unavailable daemons refuse recovery.
   Existing cleanup callers can use the additive `recover` option on
   `sdk.environments.experimental_cleanup({ environmentId, recover: true })`.
   Inspect `bb environment show <id>` after recovery to confirm removal.

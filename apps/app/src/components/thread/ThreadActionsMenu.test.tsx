@@ -46,6 +46,7 @@ import {
   useAppPanelController,
   type AppFixedTabDestination,
 } from "@/lib/app-fixed-tab-navigation";
+import { AppNavigationSurfaceProvider } from "@/lib/app-navigation-host";
 import {
   ThreadActionsContextMenu,
   ThreadActionsMenu,
@@ -940,7 +941,7 @@ describe("thread actions outside bb's own surfaces", () => {
     expect(sdkThreads.get).toHaveBeenCalledWith({ threadId: baseThread.id });
   });
 
-  it("opens a plugin's thread panel in the focused thread view, through experimental_panel and the retired openThreadPanel", async () => {
+  it("opens a plugin's thread panel in the focused thread view, through panel and the retired experimental_panel and openThreadPanel", async () => {
     const open = vi.fn(() => true);
     const close = vi.fn();
     const opened = vi.fn();
@@ -953,17 +954,21 @@ describe("thread actions outside bb's own surfaces", () => {
       },
     ];
     function FocusedThreadView() {
-      useAppPanelController({
+      const panel = useAppPanelController({
         activeTabId: null,
         close,
         destinations,
-        isFocused: true,
       });
-      return null;
+      return (
+        <AppNavigationSurfaceProvider capabilities={{ panel }} isFocused>
+          {null}
+        </AppNavigationSurfaceProvider>
+      );
     }
     type RetiredNavigate = {
       openThreadPanel(options: { actionId: string }): boolean;
     };
+    type RetiredContext = { experimental_panel: unknown };
     render(<FocusedThreadView />);
     renderSurface(
       surface,
@@ -975,12 +980,15 @@ describe("thread actions outside bb's own surfaces", () => {
             title: "Open details",
             icon: "Info",
             group: "5_plugin",
-            item: ({ navigate, experimental_panel }) => ({
+            item: (input) => ({
               label: "Open details",
               icon: "Info",
               run: () => {
+                const { navigate, panel } = input;
                 opened(
-                  experimental_panel.openTab({
+                  (input as unknown as RetiredContext).experimental_panel ===
+                    panel,
+                  panel.openTab({
                     tab: {
                       id: "details",
                       context: { kind: "thread" },
@@ -991,7 +999,7 @@ describe("thread actions outside bb's own surfaces", () => {
                   (navigate as unknown as RetiredNavigate).openThreadPanel({
                     actionId: "details",
                   }),
-                  experimental_panel.close(),
+                  panel.close(),
                 );
               },
             }),
@@ -1004,7 +1012,9 @@ describe("thread actions outside bb's own surfaces", () => {
     fireEvent.click(
       await screen.findByRole("menuitem", { name: "Open details" }),
     );
-    await waitFor(() => expect(opened).toHaveBeenCalledWith(true, true, true));
+    await waitFor(() =>
+      expect(opened).toHaveBeenCalledWith(true, true, true, true),
+    );
     expect(open).toHaveBeenNthCalledWith(1, undefined, {
       params: { from: "panel" },
     });

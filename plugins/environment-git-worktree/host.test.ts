@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import {
   cp,
@@ -14,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import { experimental_createProcessLifeline } from "@get-bb/plugin-sdk/testing";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import {
   afterAll,
@@ -54,15 +56,6 @@ afterAll(async () => {
     await rm(repositoryTemplate, { recursive: true, force: true });
   }
 });
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const result = await execFileAsync("git", args, {
@@ -280,6 +273,57 @@ describe.concurrent("worktree host entry", () => {
       expect(await branchExists(sourcePath, "bb/saved-state")).toBe(false);
     },
   );
+
+  it("removes a worktree after a conflicted rebase finishes", async ({
+    onTestFinished,
+  }) => {
+    const { sourcePath, dataDir } =
+      await createSourceRepository(onTestFinished);
+    const harness = createHarness(dataDir);
+    onTestFinished(() => harness.experimental_dispose());
+    const created = await harness.experimental_call(
+      "create",
+      createInput({
+        operationId: "create-rebased",
+        sourcePath,
+        pathKey: "rebased",
+        branchName: "bb/rebased",
+      }),
+    );
+    if (created.status !== "created") throw new Error(created.message);
+    await writeFile(join(created.path, "conflict.txt"), "branch\n");
+    await git(created.path, "add", ".");
+    await git(created.path, "commit", "-m", "branch");
+    const upstream = (await git(created.path, "rev-parse", "HEAD~1")).trim();
+    await git(created.path, "checkout", "-q", "--detach", upstream);
+    await writeFile(join(created.path, "conflict.txt"), "upstream\n");
+    await git(created.path, "add", ".");
+    await git(created.path, "commit", "-m", "upstream");
+    const onto = (await git(created.path, "rev-parse", "HEAD")).trim();
+    await git(created.path, "checkout", "-q", "bb/rebased");
+    await expect(git(created.path, "rebase", onto)).rejects.toThrow();
+    await writeFile(join(created.path, "conflict.txt"), "resolved\n");
+    await git(created.path, "add", ".");
+    await git(created.path, "-c", "core.editor=true", "rebase", "--continue");
+    const gitDir = (
+      await git(created.path, "rev-parse", "--absolute-git-dir")
+    ).trim();
+    expect(existsSync(join(gitDir, "REBASE_HEAD"))).toBe(true);
+
+    expect(
+      await harness.experimental_call("remove", {
+        operationId: "remove-rebased",
+        pathKey: "rebased",
+        path: created.path,
+        ownedBranch: {
+          name: "bb/rebased",
+          repositoryPath: sourcePath,
+          baseBranch: created.baseBranch,
+        },
+      }),
+    ).toEqual({ status: "removed" });
+    expect(existsSync(created.path)).toBe(false);
+  });
 
   it.for(["main", "release", "origin/main", "refs/heads/main"])(
     "resolves and fetches a stale named base %s",
@@ -833,11 +877,12 @@ describe.concurrent("worktree host entry", () => {
     async ({ onTestFinished }) => {
       const { root, sourcePath, dataDir } =
         await createSourceRepository(onTestFinished);
-      const hookPidPath = join(root, "hook.pid");
+      const lifeline = await experimental_createProcessLifeline();
+      onTestFinished(() => lifeline.close());
       const hookPath = join(sourcePath, ".git", "hooks", "post-checkout");
       await writeFile(
         hookPath,
-        `#!/bin/sh\necho $$ > "${hookPidPath}"\nexec sleep 30\n`,
+        `#!/bin/sh\nexec "${process.execPath}" -e '${lifeline.holdSource("hook")}setInterval(() => {}, 1000);'\n`,
         { mode: 0o755 },
       );
       const harness = createHarness(dataDir);
@@ -854,15 +899,13 @@ describe.concurrent("worktree host entry", () => {
           { signal: controller.signal },
         )
         .catch((error: unknown) => error);
-      await expect
-        .poll(() => existsSync(hookPidPath), { timeout: 10_000 })
-        .toBe(true);
-      const hookPid = Number((await readFile(hookPidPath, "utf8")).trim());
+      const [hook] = await lifeline.waitForHolders(1);
       const abortedAt = performance.now();
       controller.abort();
       expect(await created).toBeInstanceOf(Error);
       expect(performance.now() - abortedAt).toBeLessThan(3_000);
-      await expect.poll(() => isPidAlive(hookPid)).toBe(false);
+      await hook?.exited;
+      expect(hook?.alive()).toBe(false);
       await harness.experimental_dispose();
     },
   );
@@ -1131,10 +1174,10 @@ describe.concurrent("worktree host entry", () => {
       path: created.path,
       ownedBranch: null,
     });
-    const lingeringAlive = isPidAlive(lingering.pid ?? 0);
-    lingering.kill("SIGKILL");
+    if (lingering.exitCode === null && lingering.signalCode === null) {
+      await once(lingering, "exit");
+    }
     expect(removed).toEqual({ status: "removed" });
-    expect(lingeringAlive).toBe(false);
     expect(progressText(harness)).not.toContain("tearing-down");
     expect(existsSync(join(root, "teardown.marker"))).toBe(false);
     expect(existsSync(created.path)).toBe(false);
@@ -1146,6 +1189,7 @@ describe.concurrent("worktree host entry", () => {
       sourcePath: string,
       dataDir: string,
       branchName: string,
+      storedBaseBranch?: string,
     ) {
       const harness = createHarness(dataDir);
       const created = await harness.experimental_call(
@@ -1167,7 +1211,7 @@ describe.concurrent("worktree host entry", () => {
           ownedBranch: {
             name: branchName,
             repositoryPath: sourcePath,
-            baseBranch: created.baseBranch,
+            baseBranch: storedBaseBranch ?? created.baseBranch,
           },
         });
       return { harness, path: created.path, remove };
@@ -1300,6 +1344,24 @@ describe.concurrent("worktree host entry", () => {
         await owned.harness.experimental_dispose();
       },
     );
+
+    it("deletes a squash-merged branch whose stored bare base trails origin", async ({
+      onTestFinished,
+    }) => {
+      const { sourcePath, clone, dataDir } =
+        await createClonedRepository(onTestFinished);
+      const branch = "bb/squash-local-base-thr_9";
+      const owned = await createOwned(clone, dataDir, branch, "main");
+      await commitIn(owned.path, "one.txt");
+      await git(clone, "push", "origin", branch);
+      await git(sourcePath, "merge", "--squash", branch);
+      await git(sourcePath, "commit", "-m", "Squash (#2)");
+      await git(sourcePath, "branch", "-D", branch);
+      await git(clone, "fetch", "--prune", "origin");
+      expect(await owned.remove()).toEqual({ status: "removed" });
+      expect(await branchExists(clone, branch)).toBe(false);
+      await owned.harness.experimental_dispose();
+    });
 
     it("keeps its branch when another checkout has it and never touches the user's branch", async ({
       onTestFinished,

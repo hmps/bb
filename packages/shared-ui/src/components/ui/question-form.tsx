@@ -24,6 +24,7 @@ import { Icon } from "./icon";
 import { OverflowFade } from "./overflow-fade";
 import { VoiceInputTextarea } from "./voice-input-textarea";
 import { usePointerCoarse } from "./hooks/use-pointer-coarse";
+import { observeSharedResize } from "../../lib/shared-resize-observer";
 import { cn } from "../../lib/utils";
 import {
   answerStateFor,
@@ -35,6 +36,7 @@ import {
   type QuestionFormState,
 } from "./question-form-state";
 import { useQuestionFormDraft } from "./question-form-draft";
+import { isNonImeKey } from "../../lib/ime-keyboard";
 
 const OTHER_OPTION_LABEL = "Other…";
 const FREE_TEXT_MIN_HEIGHT = 84;
@@ -53,6 +55,18 @@ interface QuestionOptionRowProps {
   shortcut?: QuestionShortcut;
 }
 
+function autoGrowTextarea(
+  element: HTMLTextAreaElement,
+  minHeight: number,
+  maxHeight: number,
+): void {
+  element.style.height = "auto";
+  element.style.height = `${Math.min(
+    Math.max(element.scrollHeight, minHeight),
+    maxHeight,
+  )}px`;
+}
+
 function useAutoGrow(
   ref: RefObject<HTMLTextAreaElement | null>,
   { minHeight, maxHeight }: { minHeight: number; maxHeight: number },
@@ -61,11 +75,7 @@ function useAutoGrow(
     (textarea?: HTMLTextAreaElement | null) => {
       const element = textarea ?? ref.current;
       if (!element) return;
-      element.style.height = "auto";
-      element.style.height = `${Math.min(
-        Math.max(element.scrollHeight, minHeight),
-        maxHeight,
-      )}px`;
+      autoGrowTextarea(element, minHeight, maxHeight);
     },
     [maxHeight, minHeight, ref],
   );
@@ -162,6 +172,14 @@ interface TabOverflow {
   end: boolean;
 }
 
+function readTabOverflow(viewport: HTMLElement): TabOverflow {
+  const maxScrollLeft = viewport.scrollWidth - viewport.clientWidth;
+  return {
+    start: viewport.scrollLeft > TAB_EDGE_EPSILON_PX,
+    end: viewport.scrollLeft < maxScrollLeft - TAB_EDGE_EPSILON_PX,
+  };
+}
+
 function QuestionTabs({
   disabled,
   currentIndex,
@@ -176,26 +194,28 @@ function QuestionTabs({
     end: false,
   });
 
+  const applyOverflow = useCallback((next: TabOverflow) => {
+    setOverflow((previous) =>
+      previous.start === next.start && previous.end === next.end
+        ? previous
+        : next,
+    );
+  }, []);
+
   const measure = useCallback(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const maxScrollLeft = viewport.scrollWidth - viewport.clientWidth;
-    const start = viewport.scrollLeft > TAB_EDGE_EPSILON_PX;
-    const end = viewport.scrollLeft < maxScrollLeft - TAB_EDGE_EPSILON_PX;
-    setOverflow((previous) =>
-      previous.start === start && previous.end === end
-        ? previous
-        : { start, end },
-    );
-  }, []);
+    applyOverflow(readTabOverflow(viewport));
+  }, [applyOverflow]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [measure]);
+    return observeSharedResize(viewport, {
+      read: () => readTabOverflow(viewport),
+      write: applyOverflow,
+    });
+  }, [applyOverflow]);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -326,8 +346,7 @@ function QuestionInputBlock({
   ): void => {
     if (
       isPointerCoarse ||
-      event.nativeEvent.isComposing ||
-      event.key !== "Enter" ||
+      !isNonImeKey(event, "Enter") ||
       event.shiftKey ||
       event.metaKey ||
       event.ctrlKey ||
@@ -597,8 +616,7 @@ export function QuestionForm({
         if (
           event.target !== event.currentTarget ||
           event.defaultPrevented ||
-          event.nativeEvent.isComposing ||
-          event.key !== "Enter" ||
+          !isNonImeKey(event, "Enter") ||
           event.shiftKey ||
           event.metaKey ||
           event.ctrlKey ||

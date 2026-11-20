@@ -1,3 +1,4 @@
+import { isImeComposing } from "@bb/shared-ui/lib/ime-keyboard";
 import {
   createContext,
   useCallback,
@@ -320,7 +321,7 @@ export function AppCommandProvider({ children }: { children: ReactNode }) {
       event: KeyboardEvent,
       commands: readonly KeyboardCommandId[],
     ): KeyboardCommandId | null => {
-      if (event.defaultPrevented || event.isComposing || event.repeat) {
+      if (event.defaultPrevented || isImeComposing(event) || event.repeat) {
         return null;
       }
       const isMac = isMacKeyboardPlatform(browserPlatform());
@@ -345,7 +346,7 @@ export function AppCommandProvider({ children }: { children: ReactNode }) {
 
   const handleKeyboardEvent = useCallback(
     (event: KeyboardEvent): boolean => {
-      if (event.defaultPrevented || event.isComposing || event.repeat) {
+      if (event.defaultPrevented || isImeComposing(event) || event.repeat) {
         return false;
       }
       if (attemptedEventsRef.current.has(event)) return false;
@@ -365,7 +366,7 @@ export function AppCommandProvider({ children }: { children: ReactNode }) {
           continue;
         }
         if (!matchesAppShortcut(event, binding.shortcut, isMac)) continue;
-        context ??= currentContext(event.target);
+        if (context === null) context = currentContext(event.target);
         if (!matchesAppCommandContext(binding, context)) continue;
         if (!dispatch(binding.command, event.target)) return false;
         event.preventDefault();

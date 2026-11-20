@@ -24,7 +24,8 @@ interface OlderThreadTimelinePageRequest {
 }
 
 export type ThreadTimelinePageRequest =
-  LatestThreadTimelinePageRequest | OlderThreadTimelinePageRequest;
+  | LatestThreadTimelinePageRequest
+  | OlderThreadTimelinePageRequest;
 
 interface TimelineLogicalSegment {
   rows: TimelineRow[];
@@ -65,14 +66,15 @@ function buildTimelineLogicalSegments(
   const bounds = [
     ownedSequenceStart,
     ...new Set(
-      args.rows.flatMap((row) =>
-        row.kind === "conversation" &&
-        row.role === "user" &&
-        row.sourceSeqStart > ownedSequenceStart &&
-        row.sourceSeqStart < ownedSequenceEnd
-          ? [row.sourceSeqStart]
-          : [],
-      ),
+      args.rows.flatMap((row) => {
+        const sequence = row.sourceSeqStart;
+        return row.kind === "conversation" &&
+          row.role === "user" &&
+          sequence > ownedSequenceStart &&
+          sequence < ownedSequenceEnd
+          ? [sequence]
+          : [];
+      }),
     ),
   ].sort((left, right) => left - right);
   const segments = bounds.map((sequenceStart): TimelineLogicalSegment => ({
@@ -80,17 +82,15 @@ function buildTimelineLogicalSegments(
     sequenceStart,
   }));
   for (const row of args.rows) {
-    if (
-      row.sourceSeqStart < ownedSequenceStart ||
-      row.sourceSeqStart >= ownedSequenceEnd
-    ) {
+    const sequence = row.sourceSeqStart;
+    if (sequence < ownedSequenceStart || sequence >= ownedSequenceEnd) {
       continue;
     }
     let start = 0;
     let end = bounds.length;
     while (start + 1 < end) {
       const middle = Math.floor((start + end) / 2);
-      if (bounds[middle]! <= row.sourceSeqStart) start = middle;
+      if (bounds[middle]! <= sequence) start = middle;
       else end = middle;
     }
     segments[start]!.rows.push(row);
@@ -99,6 +99,16 @@ function buildTimelineLogicalSegments(
   if (populated[0] !== undefined)
     populated[0].sequenceStart = ownedSequenceStart;
   return populated;
+}
+
+function firstLeafSourceSeqStart(rows: readonly TimelineRow[]): number | null {
+  let row = rows[0];
+  if (row === undefined) return null;
+  for (;;) {
+    const first = timelineRowChildren(row)?.[0];
+    if (first === undefined) return row.sourceSeqStart;
+    row = first;
+  }
 }
 
 function timelineRowChangesFrom(
@@ -208,7 +218,12 @@ export function paginateTimelineRows(
         olderCursor: hasOlderRows
           ? timelineWindowCursor(segment.sequenceStart)
           : null,
-        ...omittedRows(contents.partialRowsSourceSeqEnd, segment.sequenceStart),
+        ...omittedRows(
+          contents.partialRowsSourceSeqEnd,
+          contents.start > 0
+            ? (firstLeafSourceSeqStart(contents.rows) ?? segment.sequenceStart)
+            : segment.sequenceStart,
+        ),
         contentCursor:
           contents.start > 0
             ? {

@@ -43,6 +43,7 @@ import { providerCommandSchema } from "./projects.js";
 import {
   timelineConversationRowSchema,
   timelineRowSchema,
+  timelineUserConversationRowSchema,
   timelineWorkflowWorkRowSchema,
 } from "../thread-timeline.js";
 import {
@@ -328,7 +329,17 @@ export type SendMessageDelivery = z.infer<typeof sendMessageDeliverySchema>;
  * for now" would invite every caller to check fields that cannot exist.
  */
 export const sendMessageResponseSchema = z.discriminatedUnion("delivery", [
-  z.object({ ok: z.literal(true), delivery: z.literal("sent") }),
+  z.object({
+    ok: z.literal(true),
+    delivery: z.literal("sent"),
+    /**
+     * Thread event sequence of the delivered message, comparable with a
+     * timeline's `maxSeq`: a timeline whose `maxSeq` is at least this value
+     * already contains the message. Null when the send recorded no message,
+     * such as `/clear`.
+     */
+    messageSequence: z.number().int().nonnegative().nullable(),
+  }),
   z.object({
     ok: z.literal(true),
     delivery: z.literal("queued"),
@@ -487,7 +498,17 @@ export type SetQueuedMessageGroupBoundaryRequest = z.infer<
   typeof setQueuedMessageGroupBoundaryRequestSchema
 >;
 
-export const sendQueuedMessageResponseSchema = sendMessageResponseSchema;
+export const sendQueuedMessageResponseSchema = z.discriminatedUnion(
+  "delivery",
+  [
+    z.object({ ok: z.literal(true), delivery: z.literal("sent") }),
+    z.object({
+      ok: z.literal(true),
+      delivery: z.literal("queued"),
+      queuedMessage: threadQueuedMessageSchema,
+    }),
+  ],
+);
 export type SendQueuedMessageResponse = z.infer<
   typeof sendQueuedMessageResponseSchema
 >;
@@ -1232,6 +1253,7 @@ const threadTimelineWindowFieldsShape = {
   activeThinking: activeThinkingSchema.nullable(),
   activeWorkflows: z.array(timelineWorkflowWorkRowSchema),
   activeBackgroundCommands: z.array(timelineWorkflowWorkRowSchema),
+  pendingSteers: z.array(timelineUserConversationRowSchema),
   pendingTodos: threadTimelinePendingTodosSchema.nullable(),
   extensionStates: z.record(z.string(), jsonValueSchema),
   providerCommands: z
@@ -1249,6 +1271,7 @@ export const THREAD_TIMELINE_WINDOW_FIELD_KEYS = [
   "activeThinking",
   "activeWorkflows",
   "activeBackgroundCommands",
+  "pendingSteers",
   "pendingTodos",
   "extensionStates",
   "providerCommands",
@@ -1298,9 +1321,29 @@ export const timelineDeltaFieldsSchema = z
   .partial();
 export type TimelineDeltaFields = z.infer<typeof timelineDeltaFieldsSchema>;
 
+const timelineRowPatchPathSchema = z
+  .array(z.union([z.string(), z.number().int().nonnegative()]))
+  .min(1);
+
+export const timelineRowPatchOperationSchema = z.union([
+  z.tuple([z.literal("append"), timelineRowPatchPathSchema, z.string()]),
+  z.tuple([z.literal("set"), timelineRowPatchPathSchema, z.unknown()]),
+  z.tuple([z.literal("delete"), timelineRowPatchPathSchema]),
+]);
+export type TimelineRowPatchOperation = z.infer<
+  typeof timelineRowPatchOperationSchema
+>;
+
+export const timelineRowPatchSchema = z.object({
+  id: z.string().min(1),
+  ops: z.array(timelineRowPatchOperationSchema).min(1),
+});
+export type TimelineRowPatch = z.infer<typeof timelineRowPatchSchema>;
+
 export const timelineDeltaSchema = z.object({
   afterTag: threadTimelineTagSchema,
   upsertRows: z.array(timelineRowSchema),
+  patchRows: z.array(timelineRowPatchSchema).optional(),
   rowOrder: timelineRowOrderSchema.optional(),
   fields: timelineDeltaFieldsSchema,
 });

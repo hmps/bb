@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_matchesShortcutKey as matchesShortcutKey,
+  type PluginNavPanelProps,
+} from "@get-bb/plugin-sdk/app";
 import { useProjects } from "./data.js";
 import {
   parseTasksRoute,
@@ -19,6 +22,8 @@ import { ManagePanel } from "../views/manage/manage-panel.js";
 import { EmptyState } from "../components/empty-state.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { observeSharedResize } from "@/lib/shared-resize-observer";
+import { isNonImeKey } from "@/lib/ime-keyboard";
 
 const BOARD_MIN_WIDTH = 448;
 
@@ -113,14 +118,15 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   useEffect(() => {
     const main = mainRef.current;
     if (!main || typeof ResizeObserver === "undefined") return;
-    const update = () => {
+    const readUsable = () => {
       const mainWidth = main.clientWidth;
-      setBoardUsable(!(mainWidth > 0 && mainWidth < BOARD_MIN_WIDTH));
+      return !(mainWidth > 0 && mainWidth < BOARD_MIN_WIDTH);
     };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(main);
-    return () => observer.disconnect();
+    setBoardUsable(readUsable());
+    return observeSharedResize(main, {
+      read: readUsable,
+      write: setBoardUsable,
+    });
   }, []);
   const projects = useProjects();
 
@@ -137,7 +143,7 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   useEffect(() => {
     if (!onTaskRoute) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (!isNonImeKey(event, "Escape") || event.defaultPrevented) return;
       if (isEditableTarget(event.target)) return;
       if (hasOpenOverlay()) return;
       backRef.current();
@@ -151,7 +157,13 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "c" || event.metaKey || event.ctrlKey || event.altKey)
+      if (
+        !matchesShortcutKey(event, "c") ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      )
         return;
       if (event.defaultPrevented || event.repeat) return;
       if (isEditableTarget(event.target)) return;

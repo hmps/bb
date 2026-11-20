@@ -3,14 +3,19 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import type { ExperimentalMessageActionSurface } from "@get-bb/plugin-sdk";
+import { MessageActionSurfaceProvider } from "@/lib/message-action-surface";
 import { nanoid } from "nanoid";
 import { defaultAppSettings, type Environment } from "@bb/domain";
 import type { ThreadResponse, TimelineRow } from "@bb/server-contract";
 import {
   appendQuoteAndAttachmentsToDraft,
+  arePromptDraftStatesEqual,
+  isPromptDraftEmpty,
   promptInputToDraft,
   type PromptDraftAttachment,
   type PromptDraftState,
@@ -30,14 +35,14 @@ import {
   type ThreadTimelineInlineMessageEditor,
   type ThreadTimelineUnreadDividerPlacement,
   type TimelineTitleActionResolver,
-  type UseThreadTimelineControllerResult,
+  useThreadTimelineController,
 } from "@/components/thread/timeline";
 import type { HostConnectionNotice } from "@/components/thread/timeline/ThreadTimelineSurface";
 import { ThreadTimelinePanelLoadingSkeleton } from "@/components/thread/timeline/ThreadChatLoading";
 import { ThreadTableOfContents } from "@/components/thread/toc/ThreadTableOfContents";
 import {
   ThreadContextCard,
-  useThreadContextCardContentInset,
+  useThreadContextCardTranscriptCenteredMinWidth,
   WithoutThreadContextCard,
 } from "@/components/plugin/PluginThreadContextCard";
 import { BottomAnchoredScrollBody } from "@/components/ui/bottom-anchored-scroll-body";
@@ -79,6 +84,7 @@ import {
   type ThreadComposerPermissionPolicy,
   type ThreadDetailSentMessageEdit,
 } from "./ThreadDetailPromptArea";
+import type { SendMessageMutationLike } from "./threadDetailMutationTypes";
 
 const THREAD_DETAIL_COMPOSER_ID = "thread-detail-follow-up-composer";
 const EMPTY_CHILD_THREAD_ITEMS: readonly ChildThreadPendingAttentionSource[] =
@@ -95,12 +101,12 @@ export type ThreadScreenPresentation =
   | { kind: "transcript"; layout: "contained" | "document" };
 
 export interface ThreadScreenTimelineHost {
-  consumerMessageActions?: readonly ThreadTimelineConsumerMessageAction[];
+  consumerMessageActions: readonly ThreadTimelineConsumerMessageAction[];
   environmentHostName: string | null;
-  includePluginMessageActions: boolean;
-  leadingContent?: ReactNode;
-  onForkMessage?: ThreadTimelineForkMessageHandler;
-  onTitleAction?: TimelineTitleActionResolver;
+  leadingContent: ReactNode;
+  messageActionSurface: ExperimentalMessageActionSurface;
+  onForkMessage: ThreadTimelineForkMessageHandler | null;
+  onTitleAction: TimelineTitleActionResolver | null;
   unreadDividerAutoScroll: boolean;
   unreadDividerPlacement: ThreadTimelineUnreadDividerPlacement | null;
 }
@@ -109,9 +115,9 @@ export interface ThreadScreenComposerHost {
   environmentCheckout: WorkspaceCheckoutDisplay | undefined;
   environmentChrome: EnvironmentSummaryChrome | undefined;
   contextEnvironmentId: string | null;
-  focusRequest?: number;
-  onCreateNewThreadInEnvironment?: () => void;
-  onOpenThreadInfo?: () => void;
+  focusRequest: number | null;
+  onCreateNewThreadInEnvironment: (() => void) | null;
+  onOpenThreadInfo: (() => void) | null;
   permissionPolicy: ThreadComposerPermissionPolicy;
 }
 
@@ -122,13 +128,14 @@ interface ThreadScreenProps {
   projectId: string;
   resolveMentionLink: PromptMentionLinkResolver;
   thread: ThreadResponse;
-  timeline: UseThreadTimelineControllerResult;
+  timelineEnabled: boolean;
   timelineHost: ThreadScreenTimelineHost;
 }
 
 interface SentMessageEditSession {
   draft: PromptDraftState;
   operationId: string;
+  submitting: boolean;
   target: ThreadTimelineEditMessageTarget;
   threadId: string;
 }
@@ -256,13 +263,35 @@ function useChildThreadsSection(
 
 interface UseSentMessageEditingArgs {
   canStartEdit: boolean;
+  projectId: string;
   threadId: string;
   timelineLoading: boolean;
   timelineRows: readonly TimelineRow[];
 }
 
+interface DiscardedSentMessageEdit {
+  operationId: string;
+  unsavedDraft: PromptDraftState | null;
+}
+
+function unsavedSentMessageEditDraft(
+  session: SentMessageEditSession,
+): PromptDraftState | null {
+  if (
+    isPromptDraftEmpty(session.draft) ||
+    arePromptDraftStatesEqual(
+      session.draft,
+      promptInputToDraft(session.target.input),
+    )
+  ) {
+    return null;
+  }
+  return session.draft;
+}
+
 function useSentMessageEditing({
   canStartEdit,
+  projectId,
   threadId,
   timelineLoading,
   timelineRows,
@@ -287,6 +316,7 @@ function useSentMessageEditing({
       setSentMessageEditSession({
         draft: promptInputToDraft(target.input),
         operationId: nanoid(),
+        submitting: false,
         target,
         threadId,
       });
@@ -304,16 +334,42 @@ function useSentMessageEditing({
   const shouldDiscardMissingSentMessageEdit =
     sentMessageEditThreadId !== null &&
     sentMessageEditThreadId === threadId &&
+    sentMessageEditSession?.submitting === false &&
     !timelineLoading &&
     !sentMessageEditTargetStillPresent;
-  useEffect(() => {
-    if (!shouldDiscardMissingSentMessageEdit) {
-      return;
-    }
+  const [discardedSentMessageEdit, setDiscardedSentMessageEdit] =
+    useState<DiscardedSentMessageEdit | null>(null);
+  const handledDiscardOperationIdRef = useRef<string | null>(null);
+  if (shouldDiscardMissingSentMessageEdit && sentMessageEditSession !== null) {
     setSentMessageEditHostElement(null);
     setSentMessageEditSession(null);
-    appToast.warning("The message being edited is no longer available.");
-  }, [shouldDiscardMissingSentMessageEdit]);
+    setDiscardedSentMessageEdit({
+      operationId: sentMessageEditSession.operationId,
+      unsavedDraft: unsavedSentMessageEditDraft(sentMessageEditSession),
+    });
+  }
+  useEffect(() => {
+    if (
+      discardedSentMessageEdit === null ||
+      handledDiscardOperationIdRef.current ===
+        discardedSentMessageEdit.operationId
+    ) {
+      return;
+    }
+    handledDiscardOperationIdRef.current = discardedSentMessageEdit.operationId;
+    if (discardedSentMessageEdit.unsavedDraft === null) {
+      appToast.warning("The message being edited is no longer available.");
+      return;
+    }
+    getPromptDraftAccessor({
+      kind: "thread",
+      projectId,
+      threadId,
+    }).restoreUnsent(discardedSentMessageEdit.unsavedDraft);
+    appToast.warning("Your message edit is in the composer", {
+      description: "The message being edited is no longer available.",
+    });
+  }, [discardedSentMessageEdit, projectId, threadId]);
   const activeSentMessageEditOperationId =
     activeSentMessageEditSession?.operationId ?? null;
   const updateSentMessageEditDraft = useCallback(
@@ -331,6 +387,16 @@ function useSentMessageEditing({
       current?.operationId === operationId ? null : current,
     );
   }, []);
+  const setSentMessageEditSubmitting = useCallback(
+    (operationId: string, submitting: boolean) => {
+      setSentMessageEditSession((current) =>
+        current?.operationId === operationId
+          ? { ...current, submitting }
+          : current,
+      );
+    },
+    [],
+  );
   const cancelSentMessageEdit = useCallback(() => {
     if (!activeSentMessageEditSession) {
       return;
@@ -346,6 +412,7 @@ function useSentMessageEditing({
       }
       const session = activeSentMessageEditSession;
       const execution = target.execution;
+      setSentMessageEditSubmitting(session.operationId, true);
       void editMessage
         .mutateAsync({
           id: session.threadId,
@@ -368,6 +435,7 @@ function useSentMessageEditing({
           closeSentMessageEdit(session.operationId);
         })
         .catch((error) => {
+          setSentMessageEditSubmitting(session.operationId, false);
           showMutationErrorToast({
             error,
             fallbackMessage: "Failed to edit the message",
@@ -375,7 +443,12 @@ function useSentMessageEditing({
           });
         });
     },
-    [activeSentMessageEditSession, closeSentMessageEdit, editMessage],
+    [
+      activeSentMessageEditSession,
+      closeSentMessageEdit,
+      editMessage,
+      setSentMessageEditSubmitting,
+    ],
   );
   const activeSentMessageEditTargetMessageId =
     activeSentMessageEditSession?.target.messageId ?? null;
@@ -444,15 +517,27 @@ export function ThreadScreen({
   projectId,
   resolveMentionLink,
   thread,
-  timeline,
+  timelineEnabled,
   timelineHost,
 }: ThreadScreenProps) {
+  const timeline = useThreadTimelineController({
+    enabled: timelineEnabled,
+    threadId: thread.id,
+  });
   const systemConfigQuery = useSystemConfig();
-  const contextCardInset = useThreadContextCardContentInset();
+  const transcriptCenteredMinWidth =
+    useThreadContextCardTranscriptCenteredMinWidth();
   const pendingInteractionsQuery = useThreadPendingInteractions(thread.id);
   const pendingInteractions = pendingInteractionsQuery.data ?? [];
   const hasPendingInteraction = pendingInteractions.length > 0;
-  const sendMessage = useSendThreadMessage();
+  const sendMessageMutation = useSendThreadMessage();
+  const sendMessage = useMemo<SendMessageMutationLike>(
+    () => ({
+      isPending: sendMessageMutation.isPending,
+      mutateAsync: sendMessageMutation.mutateAsync,
+    }),
+    [sendMessageMutation.isPending, sendMessageMutation.mutateAsync],
+  );
   const parentThreadSection = useParentThreadSection(thread, composer !== null);
   const childThreadsSection = useChildThreadsSection(
     thread.id,
@@ -471,7 +556,7 @@ export function ThreadScreen({
   );
   const composerFocusRequestKey = useComposerFocusRequestKey(
     draftStorageKey,
-    composer?.focusRequest,
+    composer?.focusRequest ?? undefined,
   );
   const [timelineNavigationTargetRowId, setTimelineNavigationTargetRowId] =
     useState<string | null>(null);
@@ -486,63 +571,68 @@ export function ThreadScreen({
         !hasPendingInteraction &&
         !sendMessage.isPending &&
         !isThreadTimelinePending,
+      projectId: thread.projectId,
       threadId: thread.id,
       timelineLoading,
       timelineRows,
     });
 
+  const steerActiveThreadOnEnter =
+    systemConfigQuery.data?.generalSettings.steerActiveThreadOnEnter ??
+    defaultAppSettings.steerActiveThreadOnEnter;
   const isPanelPresentation = presentation.kind !== "page";
   const selectionAddToChat = composer ? handleAddToChat : undefined;
   const surface = (
     <SelectionAddToChatContext.Provider value={selectionAddToChat}>
-      <ThreadTimelineSurface
-        activeThinking={timeline.activeThinking}
-        canSpawnChild={thread.canSpawnChild}
-        contextBoundarySeq={timeline.contextBoundarySeq}
-        hasOlderTimelineRows={timeline.hasOlderTimelineRows}
-        hostConnectionNotice={buildHostConnectionNotice(
-          thread,
-          timelineHost.environmentHostName,
-        )}
-        isCatchingUpTimeline={timeline.isCatchingUpTimeline}
-        isLoadingOlderTimelineRows={timeline.isLoadingOlderTimelineRows}
-        isThreadTimelinePending={isThreadTimelinePending}
-        timelineError={Boolean(timeline.timelineError)}
-        loadingContent={
-          isPanelPresentation ? (
-            <ThreadTimelinePanelLoadingSkeleton />
-          ) : undefined
-        }
-        timelineErrorClassName={
-          isPanelPresentation ? "mx-2 mt-4 text-destructive" : undefined
-        }
-        leadingContent={timelineHost.leadingContent}
-        consumerMessageActions={timelineHost.consumerMessageActions}
-        includePluginMessageActions={timelineHost.includePluginMessageActions}
-        onForkMessage={timelineHost.onForkMessage}
-        onEditMessage={handleEditSentMessage}
-        inlineMessageEditor={inlineMessageEditor}
-        onMessageAddToChat={selectionAddToChat}
-        onSelectionAddToChat={selectionAddToChat}
-        onLoadOlderRows={timeline.loadOlderTimelineRows}
-        onTitleAction={timelineHost.onTitleAction}
-        projectId={projectId}
-        resolveMentionLink={resolveMentionLink}
-        showOngoingIndicator={
-          thread.status !== "stopping" &&
-          !hasPendingInteraction &&
-          isRunningThreadRuntimeDisplayStatus(thread.runtime.displayStatus) &&
-          !isThreadTimelinePending
-        }
-        timelineRows={timelineRows}
-        timelineNavigationTargetRowId={timelineNavigationTargetRowId}
-        isStopping={thread.status === "stopping"}
-        stoppingAnchorAt={thread.updatedAt}
-        threadId={thread.id}
-        threadRuntimeDisplayStatus={thread.runtime.displayStatus}
-        unreadDividerAutoScroll={timelineHost.unreadDividerAutoScroll}
-        unreadDividerPlacement={timelineHost.unreadDividerPlacement}
-      />
+      <MessageActionSurfaceProvider value={timelineHost.messageActionSurface}>
+        <ThreadTimelineSurface
+          activeThinking={timeline.activeThinking}
+          canSpawnChild={thread.canSpawnChild}
+          contextBoundarySeq={timeline.contextBoundarySeq}
+          hasOlderTimelineRows={timeline.hasOlderTimelineRows}
+          hostConnectionNotice={buildHostConnectionNotice(
+            thread,
+            timelineHost.environmentHostName,
+          )}
+          isCatchingUpTimeline={timeline.isCatchingUpTimeline}
+          isLoadingOlderTimelineRows={timeline.isLoadingOlderTimelineRows}
+          isThreadTimelinePending={isThreadTimelinePending}
+          timelineError={Boolean(timeline.timelineError)}
+          loadingContent={
+            isPanelPresentation ? (
+              <ThreadTimelinePanelLoadingSkeleton />
+            ) : undefined
+          }
+          timelineErrorClassName={
+            isPanelPresentation ? "mx-2 mt-4 text-destructive" : undefined
+          }
+          leadingContent={timelineHost.leadingContent}
+          consumerMessageActions={timelineHost.consumerMessageActions}
+          onForkMessage={timelineHost.onForkMessage ?? undefined}
+          onEditMessage={handleEditSentMessage}
+          inlineMessageEditor={inlineMessageEditor}
+          onMessageAddToChat={selectionAddToChat}
+          onSelectionAddToChat={selectionAddToChat}
+          onLoadOlderRows={timeline.loadOlderTimelineRows}
+          onTitleAction={timelineHost.onTitleAction ?? undefined}
+          projectId={projectId}
+          resolveMentionLink={resolveMentionLink}
+          showOngoingIndicator={
+            thread.status !== "stopping" &&
+            !hasPendingInteraction &&
+            isRunningThreadRuntimeDisplayStatus(thread.runtime.displayStatus) &&
+            !isThreadTimelinePending
+          }
+          timelineRows={timelineRows}
+          timelineNavigationTargetRowId={timelineNavigationTargetRowId}
+          isStopping={thread.status === "stopping"}
+          stoppingAnchorAt={thread.updatedAt}
+          threadId={thread.id}
+          threadRuntimeDisplayStatus={thread.runtime.displayStatus}
+          unreadDividerAutoScroll={timelineHost.unreadDividerAutoScroll}
+          unreadDividerPlacement={timelineHost.unreadDividerPlacement}
+        />
+      </MessageActionSurfaceProvider>
     </SelectionAddToChatContext.Provider>
   );
 
@@ -567,17 +657,16 @@ export function ThreadScreen({
       canRestoreEnvironment={thread.canRestoreEnvironment}
       environmentGoneStatus={resolveEnvironmentGoneStatus(environment)}
       environmentHostId={environment?.hostId}
-      onCreateNewThreadInEnvironment={composer.onCreateNewThreadInEnvironment}
-      onOpenThreadInfo={composer.onOpenThreadInfo}
+      onCreateNewThreadInEnvironment={
+        composer.onCreateNewThreadInEnvironment ?? undefined
+      }
+      onOpenThreadInfo={composer.onOpenThreadInfo ?? undefined}
       projectId={projectId}
       resolveMentionLink={resolveMentionLink}
       composerFocusRequestKey={composerFocusRequestKey}
       sendMessage={sendMessage}
       sentMessageEdit={sentMessageEdit}
-      steerActiveThreadOnEnter={
-        systemConfigQuery.data?.generalSettings.steerActiveThreadOnEnter ??
-        defaultAppSettings.steerActiveThreadOnEnter
-      }
+      steerActiveThreadOnEnter={steerActiveThreadOnEnter}
       pendingInteractions={pendingInteractions}
       queuedMessageCount={thread.queuedMessageCount}
       pendingTodos={timeline.pendingTodos}
@@ -605,7 +694,7 @@ export function ThreadScreen({
             key={thread.id}
             scrollBehavior="bottom-anchor"
             scrollAnchorThreadId={thread.id}
-            scrollContentInsetEndPx={contextCardInset}
+            scrollContentCenteredMinWidthPx={transcriptCenteredMinWidth}
             shellClassName="!mx-0 !mt-0 md:!mx-0 md:!mt-0"
             scrollAreaClassName="scroll-pt-4"
             contentClassName="gap-2 pt-4"

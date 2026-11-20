@@ -111,6 +111,7 @@ import {
 import { getWorkspaceOpenTargetFallbackLabel } from "@/components/workspace-open-target/workspace-open-target-display";
 import type { LocalHostDaemonAccessState } from "@/lib/local-host-daemon-access";
 import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
+import { isNonImeKey } from "@bb/shared-ui/lib/ime-keyboard";
 
 const LOCAL_EDITOR_INTEGRATION_DOCS_URL =
   "https://github.com/get-bb/bb/blob/main/docs/multiple-devices.md#open-bb-from-another-browser";
@@ -175,6 +176,8 @@ interface GeneralSettingsSectionProps {
   onConfirmThreadArchiveChange: (enabled: boolean) => void;
   keepHistoryAfterContextClear: boolean;
   onKeepHistoryAfterContextClearChange: (enabled: boolean) => void;
+  resumeThreadsAfterRestart: boolean;
+  onResumeThreadsAfterRestartChange: (enabled: boolean) => void;
   summarizeShellCommands: boolean;
   onSummarizeShellCommandsChange: (enabled: boolean) => void;
   desktopBrowserAvailable: boolean;
@@ -487,6 +490,23 @@ function LocalOpenTargetPreferenceControl({
   );
 }
 
+async function requestLocalOpenTargetAccess(
+  onRequestAccess: () => Promise<boolean>,
+  setPending: (pending: boolean) => void,
+): Promise<void> {
+  setPending(true);
+  try {
+    await onRequestAccess();
+  } catch (error) {
+    showMutationErrorToast({
+      error,
+      fallbackMessage: "Failed to connect to bb on this device",
+    });
+  } finally {
+    setPending(false);
+  }
+}
+
 export function LocalOpenTargetSettingsSection({
   accessState,
   directoryTargetId,
@@ -503,19 +523,8 @@ export function LocalOpenTargetSettingsSection({
     return null;
   }
 
-  const handleRequestAccess = async () => {
-    setAccessRequestPending(true);
-    try {
-      await onRequestAccess();
-    } catch (error) {
-      showMutationErrorToast({
-        error,
-        fallbackMessage: "Failed to connect to bb on this device",
-      });
-    } finally {
-      setAccessRequestPending(false);
-    }
-  };
+  const handleRequestAccess = () =>
+    requestLocalOpenTargetAccess(onRequestAccess, setAccessRequestPending);
 
   if (!hasDaemon) {
     const accessDenied = accessState === "denied";
@@ -676,11 +685,11 @@ function ManagedBranchPrefixSetting({
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
+          if (isNonImeKey(event, "Enter")) {
             event.preventDefault();
             commit();
           }
-          if (event.key === "Escape") {
+          if (isNonImeKey(event, "Escape")) {
             event.preventDefault();
             setDraft(value);
           }
@@ -871,6 +880,8 @@ export function GeneralSettingsSection({
   onKeepHistoryAfterContextClearChange,
   summarizeShellCommands,
   onSummarizeShellCommandsChange,
+  resumeThreadsAfterRestart,
+  onResumeThreadsAfterRestartChange,
   desktopBrowserAvailable,
   generalSettingsDisabled,
   managedBranchPrefix,
@@ -978,6 +989,18 @@ export function GeneralSettingsSection({
               disabled={generalSettingsDisabled}
               onCheckedChange={onKeepHistoryAfterContextClearChange}
               aria-label="Show messages from before a context clear"
+            />
+          </SettingsWithControl>
+
+          <SettingsWithControl
+            label="Resume interrupted threads after a restart"
+            description="Resume threads interrupted by an update, crash or restart, and tell the agent what was cut off. Queued messages send afterward."
+          >
+            <Switch
+              checked={resumeThreadsAfterRestart}
+              disabled={generalSettingsDisabled}
+              onCheckedChange={onResumeThreadsAfterRestartChange}
+              aria-label="Resume interrupted threads after a restart"
             />
           </SettingsWithControl>
 
@@ -1135,10 +1158,10 @@ const EXPERIMENT_DEFINITIONS: Record<
     description:
       "When an idle thread holds at least 100k tokens and its prompt cache has expired, the composer offers to compact before your next send. Works with supported providers (e.g. Claude Code, Pi).",
   },
-  dismissReadNotifications: {
-    label: "Clear notifications once a thread is read",
+  keyedPluginCss: {
+    label: "Faster styles inside plugins",
     description:
-      "When you read a thread on any device, remove its notifications from your phones and tablets and from open bb windows and tabs. Phones need an app version that supports it.",
+      "Load each plugin's stylesheet so the browser can skip it inside other plugins' UI, such as the sidebar and composer, which makes style updates there cheaper. bb marks plugin UI that a plugin labeled the old way so its styles still apply. Applies after a reload.",
   },
   performanceDiagnostics: {
     label: "Server performance diagnostics",
@@ -1150,11 +1173,12 @@ const EXPERIMENT_DEFINITIONS: Record<
     description:
       "List plugins with updates on the Updates page, update them one by one or all at once, and count them in the sidebar updates badge.",
   },
-  resumeThreadsAfterRestart: {
-    label: "Resume interrupted threads after a restart",
+  resumeDaemonSessions: {
+    label: "Keep machines connected through network drops",
     description:
-      "When an update, crash or restart cuts off a running thread or stops a background command a thread is waiting on, bb resumes the thread a few seconds after it comes back and tells the agent what was cut off. Messages you queued meanwhile send after it.",
+      "When a machine's connection to the server drops for under 30 seconds, it picks up where it left off instead of reconnecting from scratch, so its terminals and running requests carry on. Applies from the next drop.",
   },
+
   serverMove: {
     label: "Server move",
     description:
@@ -1169,16 +1193,6 @@ const EXPERIMENT_DEFINITIONS: Record<
     label: "Thread context card",
     description:
       "Show a thread's changes, pull request, and parent and child threads in a card at the upper-right of each thread pane instead of above the composer. A header button opens or pins it; wide panes keep it beside the transcript.",
-  },
-  threadRowMetadata: {
-    label: "Thread row metadata",
-    description:
-      "Add Metadata to the built-in thread list's Organize → Rows menu. When it is checked, plugins can show details such as a thread's pull request on a second line under its title.",
-  },
-  updateWhenIdle: {
-    label: "Update when idle",
-    description:
-      "Adds a Restart and update bb automatically switch to the Updates page. While it is on, bb checks for updates every hour and restarts into a new version once no thread is running, waiting again if a thread starts before it restarts. Skip this version keeps a version from installing until a newer one appears. bb updates app apply --when-idle waits for threads once from the CLI.",
   },
   walCheckpointWorker: {
     label: "Background database checkpoints",
@@ -1458,6 +1472,12 @@ export function SettingsView() {
             updateGeneralSettingsMutation.mutate({
               ...generalSettings,
               keepHistoryAfterContextClear: enabled,
+            })
+          }
+          resumeThreadsAfterRestart={generalSettings.resumeThreadsAfterRestart}
+          onResumeThreadsAfterRestartChange={(enabled) =>
+            updateGeneralSettingsMutation.mutate({
+              resumeThreadsAfterRestart: enabled,
             })
           }
           summarizeShellCommands={generalSettings.summarizeShellCommands}

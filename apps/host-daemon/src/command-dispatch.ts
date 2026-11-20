@@ -13,13 +13,15 @@ import {
   type DesktopBrowserResult,
   type HostDaemonCommand,
   type HostDaemonCommandResult,
+  type HostDaemonContributedEnvEntry,
   type HostDaemonOnlineRpcCommand,
   type HostDaemonOnlineRpcCommandType,
   type HostDaemonOnlineRpcResult,
   type HostDaemonSettledCommandType,
   type ProviderCliInstallEvent,
+  type ThreadStopAim,
 } from "@bb/host-daemon-contract";
-import type { AgentRuntimeBridgeLaunch } from "@bb/agent-runtime";
+import type { AgentRuntime, AgentRuntimeBridgeLaunch } from "@bb/agent-runtime";
 import semver from "semver";
 import {
   ExpectedCommandDispatchError,
@@ -96,6 +98,23 @@ type RuntimeStopCommand =
   | CommandOf<"thread.stop">
   | CommandOf<"thread.storage.delete">;
 
+function isStopAimedAtActiveTurn(
+  runtime: AgentRuntime,
+  threadId: string,
+  aim: ThreadStopAim,
+): boolean {
+  const activeTurnId = runtime.getActiveTurnId(threadId);
+  if (activeTurnId === null) {
+    return true;
+  }
+  return (
+    activeTurnId === aim.turnId ||
+    runtime
+      .getActiveTurnRequestIds(threadId)
+      .some((requestId) => aim.requestIds.includes(requestId))
+  );
+}
+
 async function stopThreadRuntime(
   command: RuntimeStopCommand,
   options: CommandDispatchOptions,
@@ -125,6 +144,14 @@ async function stopThreadRuntime(
       await entry.runtime.waitForActiveTurn(command.threadId, {
         timeoutMs: THREAD_STOP_ACTIVE_TURN_WAIT_MS,
       });
+    }
+    if (
+      command.type === "thread.stop" &&
+      command.aimedAt !== null &&
+      !isStopAimedAtActiveTurn(entry.runtime, command.threadId, command.aimedAt)
+    ) {
+      await options.eventSink.flush();
+      return { providerCheckpointId, activeTurnRetained: true };
     }
     const result = await entry.runtime.stopThread({
       threadId: command.threadId,
@@ -280,6 +307,7 @@ async function runProviderInstallationOnHost(
     const maintenanceArgs = {
       providerId: command.providerId,
       bridgeLaunch,
+      contributedEnv: command.contributedEnv,
     };
     const run = await options.providerInstallationRun({
       ...maintenanceArgs,
@@ -391,6 +419,7 @@ async function withResolvedBridgeLaunch<TResult>(
     providerId: string;
     bridgeLaunch: AgentRuntimeBridgeLaunch;
     cwd?: string;
+    contributedEnv: readonly HostDaemonContributedEnvEntry[];
   }) => Promise<TResult>,
 ): Promise<TResult> {
   const bridgeLaunch = await resolveRuntimeBridgeLaunch(
@@ -401,6 +430,7 @@ async function withResolvedBridgeLaunch<TResult>(
     providerId: command.providerId,
     ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
     bridgeLaunch,
+    contributedEnv: command.contributedEnv,
   });
 }
 
@@ -525,7 +555,14 @@ const commandHandlers: CommandHandlerMap = {
         options.emitEnvironmentHookProgress?.({
           type: "environment.hook.progress",
           operationId: command.operationId,
-          entry: { type: "output", text, status: null },
+          entry: {
+            type: "output",
+            key: "clone-output",
+            text,
+            status: null,
+            startedAt: null,
+            metadata: null,
+          },
         }),
       ...userExecutableProcessOptions(options.runtimeManager.getShellEnv()),
       ...(command.targetPath !== undefined
@@ -637,6 +674,7 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         options,
       ),
       cwd,
+      contributedEnv: command.contributedEnv,
     });
   },
   "provider.health": (command, options) =>
@@ -665,6 +703,7 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
     return options.providerInstallationStatus({
       providerId: command.providerId,
       bridgeLaunch,
+      contributedEnv: command.contributedEnv,
     });
   },
   "provider.installation.run": runProviderInstallationOnHost,
