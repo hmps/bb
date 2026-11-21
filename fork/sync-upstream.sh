@@ -19,7 +19,7 @@ git fetch "$upstream_remote"
 
 echo "Merging ${upstream_ref} ($(git rev-parse --short "$upstream_ref")) into $(git rev-parse --abbrev-ref HEAD)"
 merge_status=0
-git merge --no-ff --no-commit "$upstream_ref" || merge_status=$?
+git merge --no-ff --no-commit -m "Merge ${upstream_ref} into main" "$upstream_ref" || merge_status=$?
 
 if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
   if [[ "$merge_status" -ne 0 ]]; then
