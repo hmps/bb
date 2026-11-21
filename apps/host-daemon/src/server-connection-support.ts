@@ -23,7 +23,7 @@ export interface ReconnectingWebSocketLike {
   onmessage: ((event: any) => void) | null;
   onclose: ((event: any) => void) | null;
   onerror: ((event: any) => void) | null;
-  send(data: string): void;
+  send(data: string | Uint8Array<ArrayBuffer>): void;
   close(code?: number, reason?: string): void;
   reconnect(code?: number, reason?: string): void;
 }
@@ -35,6 +35,7 @@ interface ReconnectingWebSocketOptions {
   connectionTimeout: number;
   headers?: Record<string, string>;
   maxRetries: number;
+  onFrameWritten: () => void;
   protocols?: string[];
 }
 
@@ -137,10 +138,11 @@ export function createDefaultReconnectingWebSocket(
   urlProvider: () => Promise<string>,
   options: ReconnectingWebSocketOptions,
 ): ReconnectingWebSocketLike {
-  const { headers, protocols, ...reconnectionOptions } = options;
+  const { headers, onFrameWritten, protocols, ...reconnectionOptions } =
+    options;
   return new ReconnectingWebSocket(urlProvider, protocols ?? [], {
     ...reconnectionOptions,
-    WebSocket: createNodeWebSocketConstructor(headers),
+    WebSocket: createNodeWebSocketConstructor({ headers, onFrameWritten }),
   });
 }
 

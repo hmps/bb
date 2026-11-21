@@ -617,7 +617,7 @@ describe("createHostDaemonApp", () => {
     expect(
       vi
         .mocked(socket.send)
-        .mock.calls.map(([frame]) => JSON.parse(frame).message),
+        .mock.calls.map(([frame]) => JSON.parse(String(frame)).message),
     ).toContainEqual({ type: "machine.shutdown-ack" });
     expect(exitProcess).toHaveBeenCalledWith(0);
   });

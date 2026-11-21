@@ -30,6 +30,10 @@
     "category": "cloud-and-remote",
     "screenshots": []
   },
+  "tailscale": {
+    "category": "cloud-and-remote",
+    "screenshots": []
+  },
   "custom-instructions": {
     "category": "memory-and-context",
     "screenshots": []
@@ -72,6 +76,10 @@
   },
   "github-star": {
     "category": "utilities",
+    "screenshots": []
+  },
+  "server-switcher": {
+    "category": "cloud-and-remote",
     "screenshots": []
   },
   "plugin-api-docs": {

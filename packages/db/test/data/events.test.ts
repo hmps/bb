@@ -64,6 +64,7 @@ import {
 import { createEnvironment } from "../../src/data/environments.js";
 import { createProject } from "../../src/data/projects.js";
 import {
+  archiveThread,
   createThread,
   searchThreadsWithPendingInteractionState,
 } from "../../src/data/threads.js";
@@ -2683,9 +2684,21 @@ describe("events", () => {
     const rowsByThreadId = new Map(
       listStoredClientTurnRequestRowsByKeys(db, {
         keys: [
-          { threadId: thread.id, requestId: "creq_23456789aa" },
-          { threadId: otherThread.id, requestId: "creq_23456789aa" },
-          { threadId: thread.id, requestId: "creq_23456789aa" },
+          {
+            acceptedSequence: 3,
+            threadId: thread.id,
+            requestId: "creq_23456789aa",
+          },
+          {
+            acceptedSequence: 2,
+            threadId: otherThread.id,
+            requestId: "creq_23456789aa",
+          },
+          {
+            acceptedSequence: 3,
+            threadId: thread.id,
+            requestId: "creq_23456789aa",
+          },
         ],
       }).map((row) => [row.threadId, row]),
     );
@@ -2696,14 +2709,59 @@ describe("events", () => {
     expect(
       listStoredClientTurnRequestRowsByKeys(db, {
         keys: [
-          { threadId: thread.id, requestId: "creq_23456789ab" },
-          { threadId: thread.id, requestId: "creq_23456789aa" },
+          {
+            acceptedSequence: 3,
+            threadId: thread.id,
+            requestId: "creq_23456789ab",
+          },
+          {
+            acceptedSequence: 3,
+            threadId: thread.id,
+            requestId: "creq_23456789aa",
+          },
         ],
       }).map((row) => row.sequence),
     ).toEqual([1, 2]);
   });
 
-  it("batches client turn request keys above the expression-depth limit", () => {
+  it("finds a client turn request only before the acceptance that consumed it", () => {
+    const { db, thread } = setup();
+    const requestId = "creq_23456789aa";
+    insertEvents(db, noopNotifier, [
+      {
+        threadId: thread.id,
+        sequence: 1,
+        type: "client/turn/requested",
+        ...threadEventFields,
+        data: clientTurnRequestData(requestId, "original"),
+      },
+      {
+        threadId: thread.id,
+        sequence: 2,
+        type: "client/turn/requested",
+        ...threadEventFields,
+        data: clientTurnRequestData(requestId, "resent"),
+      },
+      {
+        threadId: thread.id,
+        sequence: 4,
+        type: "client/turn/requested",
+        ...threadEventFields,
+        data: clientTurnRequestData(requestId, "after acceptance"),
+      },
+    ]);
+
+    const sequencesAcceptedAt = (acceptedSequence: number) =>
+      listStoredClientTurnRequestRowsByKeys(db, {
+        keys: [{ acceptedSequence, requestId, threadId: thread.id }],
+      }).map((row) => row.sequence);
+
+    expect(sequencesAcceptedAt(3)).toEqual([2]);
+    expect(sequencesAcceptedAt(2)).toEqual([1]);
+    expect(sequencesAcceptedAt(1)).toEqual([]);
+  });
+
+  it("batches client turn request keys above the SQLite variable limit", () => {
     const { db, thread } = setup();
     const requestId = "creq_23456789ab";
     insertEvents(db, noopNotifier, [
@@ -2716,11 +2774,12 @@ describe("events", () => {
       },
     ]);
     const keys = [
-      ...Array.from({ length: 995 }, (_, index) => ({
+      ...Array.from({ length: 11_000 }, (_, index) => ({
+        acceptedSequence: 2,
         requestId,
         threadId: `thr_missing_request_${index}`,
       })),
-      { requestId, threadId: thread.id },
+      { acceptedSequence: 2, requestId, threadId: thread.id },
     ];
 
     expect(listStoredClientTurnRequestRowsByKeys(db, { keys })).toEqual([
@@ -4534,6 +4593,11 @@ describe("events", () => {
     });
     expect(
       listOpenBackgroundTaskItemRowsForHost(db, { hostId: otherHost.id }),
+    ).toEqual([]);
+
+    archiveThread(db, noopNotifier, thread.id);
+    expect(
+      listOpenBackgroundTaskItemRowsForHost(db, { hostId: host.id }),
     ).toEqual([]);
   });
 

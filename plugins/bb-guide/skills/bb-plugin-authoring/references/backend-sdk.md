@@ -122,12 +122,14 @@ CLI, agents, and bb. Tests set it with
 `harness.callRpc(method, input, { experimental_caller })`.
 
 ```ts
-handOver(input, { experimental_caller: caller }) {
-  if (caller.kind !== "plugin" || caller.pluginId !== "connect") {
-    throw new Error("only the connect plugin can call handOver");
-  }
-  return handOver(input);
-},
+const handlers = {
+  handOver(input, { experimental_caller: caller }) {
+    if (caller.kind !== "plugin" || caller.pluginId !== "connect") {
+      throw new Error("only the connect plugin can call handOver");
+    }
+    return handOver(input);
+  },
+};
 ```
 
 The context's `experimental_signal` aborts when the caller stops waiting
@@ -261,7 +263,9 @@ await bb.sdk.threads.update({ threadId, title: "Fix the flaky test" });
 `threads.list` filters on `projectId`, `environmentId`, `hostId`,
 `parentThreadId`, `sourceThreadId`, `sectionId`, `originKind`,
 `originPluginId`, `archived`, `unsectioned`, `hasParent`, and `includeHidden`,
-and it pages with `limit` and `offset`. `threadIds` (at most 200) narrows it to
+and it returns one page of a required `limit`, so a caller that needs every
+match pages with `offset` until a page comes back shorter than its `limit`
+(`environments.list` pages the same way). `threadIds` (at most 200) narrows it to
 those threads and leaves out unknown or deleted IDs, so it also answers which
 of a set of threads still exist.
 `threads.update` writes `title`, `sectionId`, `parentThreadId`, `model`,
@@ -293,19 +297,21 @@ first when the worker no longer belongs in active lists. Use a `finally`
 block so a plugin failure cannot retain the agent process:
 
 ```ts
-const worker = await bb.sdk.threads.spawn({
-  projectId,
-  environment: { type: "project-default" },
-  prompt: "Review this change.",
-  visibility: "hidden",
-});
+async function review(projectId: string) {
+  const worker = await bb.sdk.threads.spawn({
+    projectId,
+    environment: { type: "project-default" },
+    prompt: "Review this change.",
+    visibility: "hidden",
+  });
 
-try {
-  await bb.sdk.threads.wait({ threadId: worker.id, status: "idle" });
-  return await bb.sdk.threads.output({ threadId: worker.id });
-} finally {
-  await bb.sdk.threads.archive({ threadId: worker.id });
-  await bb.sdk.threads.stop({ threadId: worker.id });
+  try {
+    await bb.sdk.threads.wait({ threadId: worker.id, status: "idle" });
+    return await bb.sdk.threads.output({ threadId: worker.id });
+  } finally {
+    await bb.sdk.threads.archive({ threadId: worker.id });
+    await bb.sdk.threads.stop({ threadId: worker.id });
+  }
 }
 ```
 
@@ -397,5 +403,11 @@ preview URLs expire and never reveal the host id or absolute root.
 Caller-gated RPC handlers can throw `new experimental_PluginRpcRefusal({
 code: "forbidden", message: "Only the connect plugin can call this method" })`
 from `@get-bb/plugin-sdk`. `bb.sdk.plugins.callRpc` rejects with a `BbHttpError`
-whose `code` is `forbidden` and `status` is 403. See `backend-events.md` for
+whose `code` is `forbidden` and `status` is 403.
+
+Every `bb.sdk` call rejects a non-2xx response with that error. Import it as
+`experimental_BbHttpError` from `@get-bb/plugin-sdk` and narrow with
+`error instanceof experimental_BbHttpError`, which also matches errors thrown
+by the host's copy of the SDK; then read `status`, `code` (the server's error
+code, such as `thread_not_found`, or null) and `body`. See `backend-events.md` for
 the refusal codes, optional validation issues and mutation rollback behavior.

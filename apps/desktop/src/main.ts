@@ -52,6 +52,7 @@ import {
   bbDesktopBrowserImportCookiesRequestSchema,
   bbDesktopThemeSchema,
   type BbDesktopInfo,
+  type BbDesktopServerList,
   type BbDesktopWindowState,
 } from "@bb/desktop-contract";
 import {
@@ -267,7 +268,10 @@ import {
   BB_DESKTOP_BROWSER_OPEN_FULL_DISK_ACCESS_SETTINGS_CHANNEL,
 } from "./desktop-browser-ipc.js";
 import { parseDesktopSystemConfig } from "./desktop-system-config.js";
-import { resolveDesktopReloadShortcut } from "./desktop-reload-shortcut.js";
+import {
+  STARTUP_RELOAD_KEYBINDINGS,
+  resolveDesktopReloadShortcut,
+} from "./desktop-reload-shortcut.js";
 import {
   type RendererCrashRecovery,
   watchRendererCrashes,
@@ -414,7 +418,7 @@ let desktopBrowserBroker: DesktopBrowserBroker | null = null;
 let desktopBrowserBrokerClient: ReturnType<
   typeof createDesktopBrowserBrokerClient
 > | null = null;
-let currentAppKeybindings: AppKeybindings = [];
+let currentAppKeybindings: AppKeybindings = STARTUP_RELOAD_KEYBINDINGS;
 let currentApplicationMenuAccelerators = DEFAULT_APPLICATION_MENU_ACCELERATORS;
 let desktopUpdateService: DesktopUpdateService | null = null;
 let desktopAutoUpdateService: DesktopAutoUpdateService | null = null;
@@ -585,7 +589,11 @@ function registerApplicationRendererReloadShortcut(
   webContents: WebContents,
 ): void {
   webContents.on("before-input-event", (event, input) => {
-    const shortcut = resolveDesktopReloadShortcut(input);
+    const shortcut = resolveDesktopReloadShortcut(
+      input,
+      currentAppKeybindings,
+      process.platform,
+    );
     if (shortcut === null) {
       return;
     }
@@ -776,6 +784,13 @@ function listServerChoices() {
   );
 }
 
+function getServerList(): BbDesktopServerList {
+  return {
+    servers: listServerChoices(),
+    connectServersSkipReason: connectServerSyncSkipReason,
+  };
+}
+
 function buildMenuServerItems(connectServers: ConnectServerRef[]) {
   return buildDesktopServerChoices(
     serverTargetStore,
@@ -826,13 +841,13 @@ function popupServerMenu(browserWindow: BrowserWindow | null): void {
 }
 
 function refreshApplicationMenu(): void {
-  const choices = listServerChoices();
+  const serverList = getServerList();
   for (const browserWindow of BrowserWindow.getAllWindows()) {
     if (applicationWindowWebContentsIds.has(browserWindow.webContents.id)) {
       sendToApplicationRenderer(
         browserWindow,
         BB_DESKTOP_SERVER_CHOICES_CHANGED_CHANNEL,
-        choices,
+        serverList,
       );
     }
   }
@@ -1056,6 +1071,7 @@ async function refreshSystemConfig(
     currentAppKeybindings = config.keybindings;
     currentApplicationMenuAccelerators = resolveApplicationMenuAccelerators(
       currentAppKeybindings,
+      process.platform,
     );
     refreshApplicationMenu();
   } catch (error) {
@@ -2401,8 +2417,14 @@ function registerDesktopUpdateIpc(): void {
   registerServerChoiceIpc({
     applicationWindowWebContentsIds,
     onListRequested: () => connectServerSync?.onListRequested(),
-    list: listServerChoices,
+    list: getServerList,
     select: setActiveServerTarget,
+    addServer() {
+      void openSetServerUrlDialog(true);
+    },
+    signInToConnect() {
+      openConnectSignIn(getFocusedApplicationWindow());
+    },
     onError: (error) =>
       desktopLogger.error(`Could not switch server: ${String(error)}`),
   });
@@ -2668,7 +2690,9 @@ async function waitForWindowsInstallerToFinish(): Promise<boolean> {
   return result === "finished" && !quitting;
 }
 
-async function waitForOwnedRuntimeReady(bbProcess: BbAppProcess): Promise<void> {
+async function waitForOwnedRuntimeReady(
+  bbProcess: BbAppProcess,
+): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   const result = await Promise.race([
     bbProcess.ready.then(() => "ready" as const),

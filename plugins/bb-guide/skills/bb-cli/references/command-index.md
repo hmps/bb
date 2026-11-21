@@ -224,6 +224,7 @@ Use `--selected-model <model-id>` to discover its reasoning choices and include 
 
 - `bb environment`
 - `bb environment providers`
+- `bb environment create`
 - `bb environment list`
 - `bb environment delete`
 - `bb environment cleanup`

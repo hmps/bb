@@ -11,6 +11,7 @@ import {
   getDisabledProviderIds,
   getPluginRecommendationId,
   getPluginSafeMode,
+  getServerAccessOrigins,
   getSkippedAppUpdate,
   isAppUpdateSendHoldSet,
   setAiServiceSelection,
@@ -22,6 +23,7 @@ import {
   setDisabledProviderIds,
   setPluginRecommendationId,
   setPluginSafeMode,
+  setServerAccessOrigins,
   setSkippedAppUpdate,
 } from "../../src/data/app-settings.js";
 import {
@@ -49,6 +51,7 @@ import {
   interruptPendingInteractionsForThreads,
   listActivePluginPendingInteractions,
   listActiveProviderPendingInteractionsForHost,
+  listHostThreadIdsWithInterruptiblePendingInteractions,
   listPendingInteractionsByThread,
   setPendingInteractionInterrupted,
   setPendingInteractionResolved,
@@ -82,7 +85,7 @@ import {
   migrateNextLegacyImageGenerationOutput,
   pruneClosedSessions,
 } from "../../src/data/sweeps.js";
-import { listHostThreadIds } from "../../src/data/threads.js";
+import { listRuntimeHostThreadIds } from "../../src/data/threads.js";
 import {
   deleteSweepItemFailures,
   deleteSweepItemFailuresAfterAttempts,
@@ -360,12 +363,32 @@ const SETTINGS_CASES: readonly Case[] = [
     run: (db) => setAutoAppUpdate(db, false),
   },
   {
+    name: `${APP_SETTINGS}#setServerAccessOrigins`,
+    run: (db) =>
+      setServerAccessOrigins(db, [
+        {
+          providerId: "tailscale",
+          pluginId: "bb--tailscale",
+          origin: "https://mini.tail1234.ts.net",
+        },
+        {
+          providerId: "connect",
+          pluginId: "connect",
+          origin: "https://bee.getbb.app",
+        },
+      ]),
+  },
+  {
     name: `${APP_SETTINGS}#getAiServiceSelections`,
     run: (db) => getAiServiceSelections(db),
   },
   {
     name: `${APP_SETTINGS}#getPluginSafeMode`,
     run: (db) => getPluginSafeMode(db),
+  },
+  {
+    name: `${APP_SETTINGS}#getServerAccessOrigins`,
+    run: (db) => getServerAccessOrigins(db),
   },
   {
     name: `${APP_SETTINGS}#getDisabledProviderIds`,
@@ -499,6 +522,10 @@ const MAINTENANCE_CASES: readonly Case[] = [
   },
   {
     name: `${MAINTENANCE}#dropDeferredLegacyTables`,
+    growsWith: {
+      history:
+        "Drops the deferred legacy tables, freeing every page, and the seed grows their rows",
+    },
     run: (db) => dropDeferredLegacyTables(db),
   },
   {
@@ -630,6 +657,10 @@ const MAINTENANCE_CASES: readonly Case[] = [
   },
   {
     name: `${SWEEPS}#pruneClosedSessions`,
+    growsWith: {
+      history:
+        "Deletes up to one batch of 1,000 closed sessions, and the smaller world has fewer than a batch",
+    },
     run: (db) =>
       pruneClosedSessions(db, {
         closedBefore: Date.now() - CLOSED_SESSION_ROW_RETENTION_MS,
@@ -742,6 +773,13 @@ const INTERACTION_CASES: readonly Case[] = [
       }),
   },
   {
+    name: `${PENDING_INTERACTIONS}#listHostThreadIdsWithInterruptiblePendingInteractions`,
+    run: (db, fixture) =>
+      listHostThreadIdsWithInterruptiblePendingInteractions(db, {
+        hostId: fixture.hostId,
+      }),
+  },
+  {
     name: `${PENDING_INTERACTIONS}#listActivePluginPendingInteractions`,
     run: (db) => listActivePluginPendingInteractions(db),
   },
@@ -789,8 +827,12 @@ const INTERACTION_CASES: readonly Case[] = [
   },
   {
     name: `${PENDING_INTERACTIONS}#interruptPendingInteractionsForThreads`,
+    growsWith: {
+      history:
+        "Probes pending interactions once per passed thread, and the case passes every live or running thread on the host, which the seed grows with the thread count",
+    },
     prepare: (db, fixture) => {
-      hostThreadIds = listHostThreadIds(db, { hostId: fixture.hostId });
+      hostThreadIds = listRuntimeHostThreadIds(db, { hostId: fixture.hostId });
     },
     run: (db) =>
       interruptPendingInteractionsForThreads(db, {
@@ -801,8 +843,12 @@ const INTERACTION_CASES: readonly Case[] = [
   },
   {
     name: `${PENDING_INTERACTIONS}#interruptPendingInteractionsForThreadIds`,
+    growsWith: {
+      history:
+        "Probes pending interactions once per passed thread, and the case passes every live or running thread on the host, which the seed grows with the thread count",
+    },
     prepare: (db, fixture) => {
-      hostThreadIds = listHostThreadIds(db, { hostId: fixture.hostId });
+      hostThreadIds = listRuntimeHostThreadIds(db, { hostId: fixture.hostId });
     },
     run: (db) =>
       interruptPendingInteractionsForThreadIds(db, {

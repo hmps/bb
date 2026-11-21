@@ -1,3 +1,4 @@
+import { threadCpuUsage } from "node:process";
 import { collectOptionalFieldPaths } from "@bb/test-helpers";
 import {
   TERMINAL_COLS_MAX,
@@ -13,6 +14,9 @@ import * as contract from "../src/index.js";
 import {
   HOST_ARTIFACT_MAX_BYTES,
   HOST_DAEMON_PROTOCOL_VERSION,
+  HOST_FILE_CHUNK_MAX_BYTES,
+  decodeHostDaemonDaemonWsMessage,
+  encodeHostDaemonDaemonWsMessage,
   HOST_DAEMON_ONLINE_RPC_COMMAND_TYPES,
   HOST_DAEMON_SETTLED_COMMAND_TYPES,
   hostDaemonEnrollRequestSchema,
@@ -76,9 +80,11 @@ const ACP_LAUNCH_SPEC = {
   },
 };
 
+type WireResultFixture = Record<string, unknown>;
+
 type OnlineRpcResponseResultFixtures = Record<
   HostDaemonOnlineRpcCommandType,
-  JsonObject
+  WireResultFixture
 >;
 type SettledResponseResultFixtures = Record<
   HostDaemonSettledCommandType,
@@ -327,7 +333,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
   },
   "host.read_file_chunk": {
     path: "/tmp/clip.mp4",
-    content: "AAEC",
+    content: new Uint8Array([0, 1, 2]),
     offset: 0,
     sizeBytes: 3,
     modifiedAtMs: 1234,
@@ -579,8 +585,8 @@ const ONLINE_RPC_RESPONSE_MISMATCH_CASES: OnlineRpcResponseMismatchCase[] = [
 
 function buildHostRpcResponseMessage(
   commandType: HostDaemonRpcCommandType,
-  result: JsonObject,
-): JsonObject {
+  result: WireResultFixture,
+): WireResultFixture {
   return {
     type: "host-rpc.response",
     requestId: `rpc-${commandType}`,
@@ -592,11 +598,21 @@ function buildHostRpcResponseMessage(
 
 function expectHostRpcResponseRoundTrip(
   commandType: HostDaemonRpcCommandType,
-  result: JsonObject,
+  result: WireResultFixture,
   name: string,
 ): void {
   const message = buildHostRpcResponseMessage(commandType, result);
-  const jsonRoundTripped = JSON.parse(JSON.stringify(message));
+  const encoded = encodeHostDaemonDaemonWsMessage(
+    hostDaemonDaemonWsMessageSchema.parse(message),
+  );
+  const decoded = decodeHostDaemonDaemonWsMessage(
+    JSON.parse(encoded.json),
+    encoded.attachment,
+  );
+  if (!decoded.ok) {
+    throw new Error(`${name} did not decode`);
+  }
+  const jsonRoundTripped = decoded.message;
 
   expect(
     hostDaemonOnlineRpcResponseMessageSchema.parse(jsonRoundTripped),
@@ -1070,7 +1086,7 @@ describe("host-daemon command schemas", () => {
   });
 
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(273);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(277);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 
@@ -1103,7 +1119,11 @@ describe("host-daemon command schemas", () => {
     expect(contract.isCompatibleHostDaemonProtocolVersion(270)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(271)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(272)).toBe(false);
-    expect(contract.isCompatibleHostDaemonProtocolVersion(273)).toBe(true);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(273)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(274)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(275)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(276)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(277)).toBe(true);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(247)).toBe(false);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(248)).toBe(true);
   });
@@ -3425,11 +3445,36 @@ describe("host-daemon session schemas", () => {
         type: "plugin-host.worker-exited",
         pluginId: "keep-awake",
         generation: "generation-1",
+        reason: "host plugin worker exited (1)",
       }),
     ).toEqual({
       type: "plugin-host.worker-exited",
       pluginId: "keep-awake",
       generation: "generation-1",
+      reason: "host plugin worker exited (1)",
+    });
+    expect(() =>
+      hostDaemonDaemonWsMessageSchema.parse({
+        type: "plugin-host.worker-exited",
+        pluginId: "keep-awake",
+        generation: "generation-1",
+      }),
+    ).toThrow();
+
+    expect(
+      hostDaemonDaemonWsMessageSchema.parse({
+        type: "plugin-host.worker-output",
+        pluginId: "keep-awake",
+        generation: "generation-1",
+        stream: "stderr",
+        line: "TypeError: boom",
+      }),
+    ).toEqual({
+      type: "plugin-host.worker-output",
+      pluginId: "keep-awake",
+      generation: "generation-1",
+      stream: "stderr",
+      line: "TypeError: boom",
     });
 
     expect(
@@ -3664,13 +3709,13 @@ describe("bounded file read contract", () => {
       hostDaemonOnlineRpcCommandSchema.parse({
         ...command,
         offset: 32 * 1024 * 1024,
-        length: 1024 * 1024,
+        length: HOST_FILE_CHUNK_MAX_BYTES,
         revision: "a".repeat(64),
       }),
-    ).toMatchObject({ length: 1024 * 1024 });
+    ).toMatchObject({ length: HOST_FILE_CHUNK_MAX_BYTES });
   });
   it.each([
-    { length: 1024 * 1024 + 1 },
+    { length: HOST_FILE_CHUNK_MAX_BYTES + 1 },
     { length: -1 },
     { length: 1.5 },
     { offset: -1 },
@@ -3683,5 +3728,48 @@ describe("bounded file read contract", () => {
       hostDaemonOnlineRpcCommandSchema.safeParse({ ...command, ...override })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("daemon websocket message dispatch", () => {
+  function cpuUsPerParse(parse: () => unknown): number {
+    parse();
+    let fastest = Number.POSITIVE_INFINITY;
+    for (let sample = 0; sample < 3; sample += 1) {
+      const started = threadCpuUsage();
+      let parses = 0;
+      let elapsedCpuUs = 0;
+      do {
+        for (let repeat = 0; repeat < 256; repeat += 1) {
+          parse();
+        }
+        parses += 256;
+        const cpu = threadCpuUsage(started);
+        elapsedCpuUs = cpu.user + cpu.system;
+      } while (elapsedCpuUs < 50_000);
+      fastest = Math.min(fastest, elapsedCpuUs / parses);
+    }
+    return fastest;
+  }
+
+  it("parses the last message type about as fast as its own schema", () => {
+    const message = {
+      type: "host-rpc.response",
+      requestId: "request-1",
+      commandType: "host.list_files",
+      ok: false,
+      errorCode: "not_found",
+      errorMessage: "Missing directory",
+    };
+    expect(hostDaemonDaemonWsMessageSchema.parse(message)).toEqual(message);
+
+    const viaMessageSchemaCpuUs = cpuUsPerParse(() =>
+      hostDaemonDaemonWsMessageSchema.parse(message),
+    );
+    const viaMemberSchemaCpuUs = cpuUsPerParse(() =>
+      hostDaemonOnlineRpcResponseMessageSchema.parse(message),
+    );
+
+    expect(viaMessageSchemaCpuUs).toBeLessThan(viaMemberSchemaCpuUs * 4);
   });
 });

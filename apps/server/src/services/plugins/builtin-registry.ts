@@ -240,6 +240,11 @@ export const BUILTIN_PLUGINS = [
     pluginId: "bb--github-star",
     defaultEnabled: true,
   },
+  {
+    name: "server-switcher",
+    pluginId: "bb--server-switcher",
+    defaultEnabled: false,
+  },
 ].map((plugin): BundledPluginDefinition => ({
   ...plugin,
   autoInstall: true,
@@ -279,6 +284,11 @@ export const OFFICIAL_PLUGINS = [
   {
     name: "theme-preview",
     pluginId: "theme-preview",
+    defaultEnabled: true,
+  },
+  {
+    name: "tailscale",
+    pluginId: "bb--tailscale",
     defaultEnabled: true,
   },
 ].map((plugin): BundledPluginDefinition => ({

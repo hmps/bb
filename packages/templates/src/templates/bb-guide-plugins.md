@@ -85,7 +85,9 @@ under `<bb-data-dir>/plugins/<id>/` (SQLite database, secrets, logs).
                                  Show or change a plugin's declared settings.
                                  Running plugins receive changes live; a
                                  plugin waiting for configuration retries
-  bb plugin logs <id> [-n N] [-f]  Print (or follow) a plugin's log
+  bb plugin logs <id> [-n N] [-f]  Print (or follow) a plugin's log: bb.log
+                                 output plus its load, handler, service and
+                                 host-worker failures
   bb plugin run <id> [args...]   Run a plugin command explicitly (also works
                                  when a core command owns its name)
   bb plugin token <id> [--rotate]  Print the token for a plugin's
@@ -165,6 +167,9 @@ Each bundled plugin documents its commands and behavior in its own skill.
   or `bb keep-awake hosts <host-id>...`.
 - GitHub Star (builtin): asks once for a GitHub star after more than five
   prompts. `bb plugin disable bb--github-star` stops it from asking.
+- Server switcher (builtin, off by default): a Servers item in the sidebar
+  footer of bb Desktop and the mobile app to switch servers, add one, or sign
+  in to bb Connect. `bb plugin enable bb--server-switcher` adds it.
 - Concurrency limit (builtin): caps running threads overall and per host.
   `bb concurrency-limit status|global|host`; see the `concurrency-limit`
   skill.
@@ -212,6 +217,10 @@ Each bundled plugin documents its commands and behavior in its own skill.
   reusable Modal cloud machines. `bb modal account inspect`,
   `bb machine create --provider modal-sandbox`, and `bb modal image|sandbox`;
   see the `modal-sandboxes` skill.
+- Tailscale (official, `bb plugin install tailscale`): reach this bb at
+  `https://<machine>.<tailnet>.ts.net` through Tailscale Serve, set up in one
+  click, and offer that address as the `tailscale` machine access provider.
+  `bb tailscale status|setup|teardown [--json]`; see the `tailscale` skill.
 
 Multi-plugin repositories
 

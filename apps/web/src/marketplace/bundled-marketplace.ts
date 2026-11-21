@@ -24,6 +24,7 @@ export const INSTALL_ON_REQUEST_BUNDLED_PLUGINS: ReadonlySet<string> = new Set([
   "environment-modal-sandbox",
   "github",
   "memory",
+  "tailscale",
   "tasks",
   "theme-preview",
 ]);
@@ -35,6 +36,7 @@ export const OFF_BY_DEFAULT_BUNDLED_PLUGINS: ReadonlySet<string> = new Set([
   "monaco-editor",
   "plugin-api-docs",
   "prompt-library",
+  "server-switcher",
   "storage-retention",
   "workflows",
 ]);

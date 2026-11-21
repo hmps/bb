@@ -1,13 +1,22 @@
-import { getAppSettings, getHost, hosts } from "@bb/db";
-import { eq } from "drizzle-orm";
+import {
+  getAppSettings,
+  getHost,
+  getInstalledPlugin,
+  getServerAccessOrigins,
+  setHostColumns,
+  setServerAccessOrigins,
+} from "@bb/db";
+import type { ServerAccessOrigin } from "@bb/domain";
 import { z } from "zod";
 import type { ServerAccessGrant } from "@get-bb/plugin-sdk";
 import type { ServerAccessStatus } from "@bb/server-contract";
 import { decideWithinBox } from "../threads/dispatch-hooks.js";
 import type { WorkSessionDeps } from "../../types.js";
 import {
+  admittedServerAccessOrigins,
   invokeServerAccessProvider,
   listServerAccessProviders,
+  setAdmittedServerAccessOrigins,
 } from "../plugins/plugin-server-access-registry.js";
 import { getMachineProvider } from "../plugins/plugin-machine-provider-registry.js";
 
@@ -91,11 +100,16 @@ function serverAccessConfiguration(deps: Dependencies) {
   };
 }
 
+let latestStatusRun = 0;
+let appliedStatusRun = 0;
+
 export async function serverAccessStatus(
   deps: Dependencies,
 ): Promise<ServerAccessStatus> {
+  const run = ++latestStatusRun;
   const configuration = serverAccessConfiguration(deps);
   const records = listServerAccessProviders();
+  const answers = new Map<string, z.infer<typeof availabilitySchema>>();
   const providers = await Promise.all(
     configuration.providers.map(async (provider) => {
       if (provider.id === "direct") return { ...provider, availability: null };
@@ -113,6 +127,7 @@ export async function serverAccessStatus(
       const parsed = result?.ok
         ? availabilitySchema.safeParse(result.value)
         : null;
+      if (parsed?.success) answers.set(provider.id, parsed.data);
       const availability: z.infer<typeof availabilitySchema> = parsed?.success
         ? parsed.data
         : {
@@ -123,7 +138,75 @@ export async function serverAccessStatus(
       return { ...provider, availability };
     }),
   );
+  if (run > appliedStatusRun) {
+    appliedStatusRun = run;
+    admitProviderOrigins(deps, records, answers);
+  }
   return { ...configuration, providers };
+}
+
+function admitProviderOrigins(
+  deps: Dependencies,
+  records: ReturnType<typeof listServerAccessProviders>,
+  answers: ReadonlyMap<string, z.infer<typeof availabilitySchema>>,
+) {
+  const previous = admittedServerAccessOrigins();
+  const registered = new Map(
+    records.map((record) => [record.provider.id, record.pluginId]),
+  );
+  const next: ServerAccessOrigin[] = [];
+  for (const [providerId, pluginId] of registered) {
+    const answer = answers.get(providerId);
+    if (answer === undefined) {
+      const kept = previous.find((entry) => entry.providerId === providerId);
+      if (kept !== undefined) next.push(kept);
+    } else if (answer.status === "available" && answer.serverUrl) {
+      next.push({
+        providerId,
+        pluginId,
+        origin: new URL(answer.serverUrl).origin,
+      });
+    }
+  }
+  for (const entry of previous) {
+    if (registered.has(entry.providerId)) continue;
+    if (getInstalledPlugin(deps.db, entry.pluginId)?.enabled === true) {
+      next.push(entry);
+    }
+  }
+  if (JSON.stringify(next) === JSON.stringify(previous)) return;
+  setAdmittedServerAccessOrigins(next);
+  setServerAccessOrigins(deps.db, next);
+}
+
+export function restoreServerAccessOrigins(deps: Dependencies): void {
+  setAdmittedServerAccessOrigins(getServerAccessOrigins(deps.db));
+}
+
+let originRefresh: Promise<void> | null = null;
+let originRefreshRequested = false;
+
+export function refreshServerAccessOrigins(deps: Dependencies): void {
+  if (originRefresh !== null) {
+    originRefreshRequested = true;
+    return;
+  }
+  originRefresh = serverAccessStatus(deps)
+    .then(
+      () => undefined,
+      (error: unknown) => {
+        deps.logger.warn(
+          { error },
+          "Could not refresh the server access provider addresses",
+        );
+      },
+    )
+    .finally(() => {
+      originRefresh = null;
+      if (!originRefreshRequested) return;
+      originRefreshRequested = false;
+      refreshServerAccessOrigins(deps);
+    });
 }
 
 function acquisitionKey(
@@ -190,11 +273,9 @@ async function resolve(
     if (availability.status !== "available") {
       throw new Error(availability.message);
     }
-    deps.db
-      .update(hosts)
-      .set({ serverAccessProviderId: providerId })
-      .where(eq(hosts.id, args.hostId))
-      .run();
+    setHostColumns(deps.db, args.hostId, {
+      serverAccessProviderId: providerId,
+    });
     let result: unknown;
     try {
       result = await invokeServerAccessProvider(record, () =>
@@ -209,13 +290,9 @@ async function resolve(
       if ("status" in parsed.data) throw new Error(parsed.data.message);
       grant = parsed.data;
     } catch (error) {
-      deps.db
-        .update(hosts)
-        .set({
-          statusMessage: error instanceof Error ? error.message : String(error),
-        })
-        .where(eq(hosts.id, args.hostId))
-        .run();
+      setHostColumns(deps.db, args.hostId, {
+        statusMessage: error instanceof Error ? error.message : String(error),
+      });
       deps.hub.notifyHost(args.hostId, ["host-connected"]);
       throw error;
     }
@@ -226,15 +303,11 @@ async function resolve(
   ) {
     throw new Error("Server access provider changed its grant identity");
   }
-  deps.db
-    .update(hosts)
-    .set({
-      serverAccessProviderId: providerId,
-      serverAccessGrantId: grant.id,
-      statusMessage: null,
-    })
-    .where(eq(hosts.id, args.hostId))
-    .run();
+  setHostColumns(deps.db, args.hostId, {
+    serverAccessProviderId: providerId,
+    serverAccessGrantId: grant.id,
+    statusMessage: null,
+  });
   args.signal.throwIfAborted();
   return grant;
 }
@@ -270,14 +343,10 @@ async function release(
       );
     }
   }
-  deps.db
-    .update(hosts)
-    .set({
-      serverAccessProviderId: purpose === "repair" ? providerId : null,
-      serverAccessGrantId: null,
-    })
-    .where(eq(hosts.id, args.hostId))
-    .run();
+  setHostColumns(deps.db, args.hostId, {
+    serverAccessProviderId: purpose === "repair" ? providerId : null,
+    serverAccessGrantId: null,
+  });
 }
 
 async function repair(

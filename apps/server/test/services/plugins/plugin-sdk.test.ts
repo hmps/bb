@@ -445,6 +445,7 @@ describe("plugin bb.sdk bind gate", () => {
       authenticatedHostId: "host-1",
       pluginId: "host-client",
       generation: "stale-generation",
+      reason: "host plugin worker exited (1)",
     });
     service.handleHostSignal({
       authenticatedHostId: "host-1",
@@ -464,6 +465,7 @@ describe("plugin bb.sdk bind gate", () => {
       authenticatedHostId: "host-1",
       pluginId: "host-client",
       generation: artifact.generation,
+      reason: "host plugin worker exited (1)",
     });
     await vi.waitFor(() => expect(workerExitHandler).toHaveBeenCalledOnce());
     expect(workerExitHandler).toHaveBeenCalledWith({ hostId: "host-1" });
@@ -1258,11 +1260,12 @@ describe("plugin bb.sdk against a running server", () => {
         }),
       ).resolves.toMatchObject({ matched: true, threadId: thread.id });
       await expect(
-        api.sdk.threads.list({ projectId: project.id }),
+        api.sdk.threads.list({ limit: 10, projectId: project.id }),
       ).resolves.not.toContainEqual(expect.objectContaining({ id: thread.id }));
       const allThreads = await api.sdk.threads.list({
         projectId: project.id,
         includeHidden: true,
+        limit: 10,
       });
       expect(allThreads).toContainEqual(
         expect.objectContaining({ id: thread.id }),

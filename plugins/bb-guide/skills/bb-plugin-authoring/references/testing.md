@@ -188,6 +188,8 @@ import {
 // loadPluginApp and renderSlot install the test runtime. The SDK looks it up
 // when a hook runs, so a static `import app from "./app"` works as well.
 const app = await loadPluginApp(() => import("./app"));
+// Pass { hasServers: true } to define the app as bb Desktop or the mobile app
+// would; experimental_hasServers() is false otherwise, as in a web browser.
 const contentScripts = await mountPluginContentScripts(app, {
   pluginId: "my-plugin",
   generation: 1,
@@ -208,10 +210,12 @@ const slot = renderSlot(
 );
 await slot.findByText("…"); // Testing Library queries
 await slot.behavior.setRealtimeConnectionState("connected");
-await slot.behavior.setComposerScope(
-  { kind: "queued-message", threadId: "t1", queuedMessageId: "q1" },
-  "queued draft",
-);
+await slot.behavior.setComposerScope({
+  kind: "queued-message",
+  threadId: "t1",
+  queuedMessageId: "q1",
+});
+await slot.behavior.setComposerText("queued draft");
 slot.inspection.rpcCalls;
 slot.inspection.navigateCalls;
 slot.inspection.composer; // text, visuals, quotes, mentions, and focus activity
@@ -251,7 +255,7 @@ arbitration. Use a live loop for those host boundaries.
   `dist/app.js` + `app.css`; `bb plugin build` and installs minify them.
 - `bb plugin list` shows status, services, schedules (with last_error),
   handler stats, and the CLI command; `bb plugin logs <id> -f` follows
-  `bb.log` output. Use `--json` only when live help lists that option.
+  `bb.log` output and the plugin's failures, with stacks. Use `--json` only when live help lists that option.
 - Exercise wire surfaces directly: `curl -X POST -H "content-type:
 application/json" -d '{}' <server>/api/v1/plugins/<id>/rpc/<method>`,
   `bb <command> …` for the CLI, `bb plugin run <id> …` as the explicit form.

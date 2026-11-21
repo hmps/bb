@@ -23,6 +23,7 @@ import {
 import type { ThreadListEntry } from "@bb/domain";
 import { makeThreadListEntry } from "@bb/test-helpers/domain-fixtures";
 import { CompactViewportOverrideProvider } from "@bb/shared-ui/hooks/use-compact-viewport";
+import { appToast } from "@/components/ui/app-toast";
 import { threadQueryKey } from "@/hooks/queries/query-keys";
 import {
   resetPluginSlotStoreForTest,
@@ -67,10 +68,10 @@ const sdkThreads = vi.hoisted(() => ({
   stop: vi.fn(),
   experimental_regenerateTitle: vi.fn(),
 }));
-const copyToClipboardWithToast = vi.hoisted(() => vi.fn(async () => true));
+const copyToClipboard = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock("@/lib/sdk", () => ({ sdk: { threads: sdkThreads } }));
-vi.mock("@/lib/clipboard", () => ({ copyToClipboardWithToast }));
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard }));
 vi.mock("./ThreadActionsProvider", () => ({
   useThreadActions: () => hostActions,
 }));
@@ -83,7 +84,9 @@ const moveAction: PluginThreadActionRegistration = {
   group: experimental_THREAD_ACTION_GROUPS.organize,
   order: 50,
   item: ({ thread }) =>
-    thread.parentThreadId !== null || thread.archivedAt !== null
+    thread.parentThreadId !== null ||
+    thread.archivedAt !== null ||
+    thread.isHidden
       ? null
       : {
           label: "Move to section",
@@ -351,6 +354,7 @@ afterEach(() => {
   resetPluginSlotStoreForTest();
   resetThreadActionRegistryForTest();
   vi.resetAllMocks();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -471,6 +475,46 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
         "Customize actions",
         "---",
         "Unarchive",
+        "Delete",
+        "---",
+        "Notifications",
+      ],
+    },
+    {
+      state: "a hidden side chat",
+      thread: makeThreadListEntry({ ...baseThread, visibility: "hidden" }),
+      route: "/",
+      layout: null,
+      desktop: [
+        "Open in split",
+        "Copy link",
+        "---",
+        "Mark unread",
+        "Restart session",
+        "---",
+        "Rename",
+        "Regenerate title",
+        "---",
+        "Customize actions",
+        "---",
+        "Archive",
+        "Delete",
+        "---",
+        "Notifications",
+      ],
+      compact: [
+        "Copy link",
+        "New thread in environment",
+        "---",
+        "Mark unread",
+        "Restart session",
+        "---",
+        "Rename",
+        "Regenerate title",
+        "---",
+        "Customize actions",
+        "---",
+        "Archive",
         "Delete",
         "---",
         "Notifications",
@@ -730,14 +774,14 @@ describe.each(SURFACES)("thread actions on the $name", (surface) => {
       expect.objectContaining({ value: "sec_building" }),
     );
 
+    const copiedToast = vi.spyOn(appToast, "success");
     await surface.open();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Copy link" }));
-    expect(copyToClipboardWithToast).toHaveBeenCalledWith(
-      `${window.location.origin}/projects/proj_a/threads/thr_target`,
-      {
-        successMessage: "Thread link copied",
-        errorMessage: "Failed to copy thread link",
-      },
+    expect(copyToClipboard).toHaveBeenCalledWith({
+      text: `${window.location.origin}/projects/proj_a/threads/thr_target`,
+    });
+    await waitFor(() =>
+      expect(copiedToast).toHaveBeenCalledWith("Thread link copied"),
     );
   });
 
