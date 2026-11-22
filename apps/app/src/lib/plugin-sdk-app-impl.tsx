@@ -65,6 +65,7 @@ import {
   usePluginCanOpenFileExternally,
   useComposer,
   useComposers,
+  useActiveComposer,
   useComposerView,
   useEnvironmentProviders,
   useProviders,
@@ -82,6 +83,7 @@ import {
   experimental_usePanelTabs,
 } from "./plugin-sdk-hooks";
 import { useAppNavigationHost } from "./app-navigation-host";
+import { useThreadRequests } from "./thread-requests";
 import {
   useSidebarThreadActions,
   useSidebarThreadDraft,
@@ -165,6 +167,7 @@ export const pluginSdkAppImplementation = {
   experimental_usePluginId: usePluginId,
   experimental_useQuestionFormHost: useQuestionFormHost,
   useBbNavigate,
+  experimental_useThreadRequests: useThreadRequests,
   experimental_useCanOpenFileExternally: usePluginCanOpenFileExternally,
   experimental_useTabVisible: useTabVisible,
   experimental_useServers: useServerChoices,
@@ -175,6 +178,7 @@ export const pluginSdkAppImplementation = {
   experimental_PanelTabIcon: PanelTabIcon,
   useComposer,
   useComposers,
+  experimental_useActiveComposer: useActiveComposer,
   experimental_useComposerRenderer: useComposerRendererApi,
   experimental_useThreadTitleDisplayText: useThreadTitleDisplayText,
   experimental_useComposerContributions: useComposerContributions,

@@ -42,6 +42,8 @@ import {
   createRetiredOpenPanel,
   withRetiredPanelAlias,
 } from "@/lib/plugin-panel-controller";
+import { getActiveComposerHandle } from "@/lib/active-composer";
+import { bindThreadRequests } from "@/lib/thread-requests";
 
 export function isAutomationEditRoutePath(pathname: string): boolean {
   return (
@@ -204,6 +206,8 @@ export function usePluginActionContextBinder(): BindPluginActionContext {
         sdk: getPluginBoundSdk(sdk, pluginId, latest.current.queryClient),
         navigate: createBbNavigate(pluginId, host, () => latest.current),
         panel: createPluginPanelController(pluginId, () => host().panel),
+        composer: getActiveComposerHandle(pluginId),
+        threadRequests: bindThreadRequests(() => latest.current.store),
       });
     return bindContext;
   });

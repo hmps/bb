@@ -504,8 +504,9 @@ function useComposerRendererHostApi({
   const threadTitleResources = useThreadTitleMentionResources();
   const queryClient = useContext(QueryClientContext);
   const reportTypeaheadLayout = useContext(QueuedEditorTypeaheadLayoutContext);
-  const isFocusedPane = useOptionalPaneContext()?.isFocused ?? true;
   const maxHeight = useContext(ComposerMaxHeightContext);
+  const isFocusedPane = useOptionalPaneContext()?.isFocused ?? true;
+  const [mountedInFocusedPane] = useState(isFocusedPane);
 
   const decorationSources = composerDecorationSources(
     resolved.effects,
@@ -562,6 +563,7 @@ function useComposerRendererHostApi({
     {
       input: {
         ...input,
+        ...(mountedInFocusedPane ? {} : { autoFocus: false }),
         ...(maxHeight === undefined ? {} : { maxHeight }),
         submission: composerSubmission(submission, onSubmit),
         voice: composerVoice(voice),
@@ -634,7 +636,7 @@ function useComposerRendererHostApi({
     onFocusCommand,
     reportMenuLayout: reportTypeaheadLayout,
     runsPluginCommands: host !== null,
-    isFocusedPane,
+    composerHost: host,
   };
   const contributions: ExperimentalComposerContributions = {
     popups: resolved.popups,
