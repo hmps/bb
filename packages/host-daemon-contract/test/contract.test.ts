@@ -267,6 +267,10 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     ],
     projectSkillsTruncated: false,
     sharedSkills: [],
+    folders: [
+      { path: "/work/app", isGitRepo: true },
+      { path: "/data/fixtures", isGitRepo: false },
+    ],
   },
   "host.delete_skill": {
     deletedPath: "/home/user/.bb/skills/review",
@@ -1086,7 +1090,7 @@ describe("host-daemon command schemas", () => {
   });
 
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(277);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(278);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 
@@ -1123,7 +1127,8 @@ describe("host-daemon command schemas", () => {
     expect(contract.isCompatibleHostDaemonProtocolVersion(274)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(275)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(276)).toBe(false);
-    expect(contract.isCompatibleHostDaemonProtocolVersion(277)).toBe(true);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(277)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(278)).toBe(true);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(247)).toBe(false);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(248)).toBe(true);
   });
@@ -1767,6 +1772,7 @@ describe("host-daemon command schemas", () => {
           permissionEscalation: null,
         },
         instructions: "Be concise.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
         contributedEnv: [],
         injectedSkillSources: [],
@@ -1802,6 +1808,7 @@ describe("host-daemon command schemas", () => {
           providerId: "codex",
           providerThreadId: "prov_123",
           instructions: "Be concise.",
+          additionalWorkspaceFolders: [],
           dynamicTools: [],
           contributedEnv: [],
           injectedSkillSources: [],
@@ -1853,6 +1860,7 @@ describe("host-daemon command schemas", () => {
           permissionEscalation: null,
         },
         instructions: "Be a helpful thread.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [
           {
             name: "notify_user",
@@ -1923,6 +1931,7 @@ describe("host-daemon command schemas", () => {
           permissionEscalation: "ask" as const,
         },
         instructions: "Be concise.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
         contributedEnv: [],
         injectedSkillSources: [],
@@ -1966,6 +1975,7 @@ describe("host-daemon command schemas", () => {
         permissionEscalation: null,
       },
       instructions: "Be a helpful thread.",
+      additionalWorkspaceFolders: [],
       dynamicTools: [],
       contributedEnv: [],
       injectedSkillSources: [],
@@ -2010,6 +2020,7 @@ describe("host-daemon command schemas", () => {
         providerId: "codex",
         providerThreadId: "provider_123",
         instructions: "Be a helpful coding agent.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
         contributedEnv: [],
         injectedSkillSources: [],
@@ -2072,6 +2083,7 @@ describe("host-daemon command schemas", () => {
         permissionEscalation: null,
       },
       instructions: "Be a helpful thread.",
+      additionalWorkspaceFolders: [],
       dynamicTools: [],
       contributedEnv: CONTRIBUTED_ENV,
       injectedSkillSources: [],
@@ -2109,6 +2121,7 @@ describe("host-daemon command schemas", () => {
         providerId: "acp-local",
         providerThreadId: "provider_123",
         instructions: "Be a helpful thread.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
         contributedEnv: CONTRIBUTED_ENV,
         injectedSkillSources: [],
@@ -2187,6 +2200,7 @@ describe("host-daemon command schemas", () => {
         permissionEscalation: null,
       },
       instructions: "Be a helpful thread.",
+      additionalWorkspaceFolders: [],
       dynamicTools: [],
       contributedEnv: [],
       injectedSkillSources: [],
@@ -2211,6 +2225,7 @@ describe("host-daemon command schemas", () => {
         providerThreadId: "provider_123",
         bridgeLaunch,
         instructions: "Be a helpful thread.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
         contributedEnv: [],
         injectedSkillSources: [],
@@ -2353,6 +2368,7 @@ describe("host-daemon command schemas", () => {
           providerId: "codex",
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
+          additionalWorkspaceFolders: [],
           dynamicTools: [],
           contributedEnv: [],
           injectedSkillSources: [],
@@ -2399,6 +2415,7 @@ describe("host-daemon command schemas", () => {
           providerId: "codex",
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
+          additionalWorkspaceFolders: [],
           dynamicTools: [],
           contributedEnv: [],
           injectedSkillSources: [],
@@ -2438,6 +2455,7 @@ describe("host-daemon command schemas", () => {
           projectId: "proj_123",
           providerId: "codex",
           instructions: "Be a helpful coding agent.",
+          additionalWorkspaceFolders: [],
           dynamicTools: [],
         },
         target: { mode: "start" },
@@ -2468,6 +2486,7 @@ describe("host-daemon command schemas", () => {
           permissionEscalation: null,
         },
         instructions: "Be concise.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
       }),
     ).toThrow();
@@ -2499,6 +2518,7 @@ describe("host-daemon command schemas", () => {
           permissionEscalation: null,
         },
         instructions: "Be concise.",
+        additionalWorkspaceFolders: [],
         dynamicTools: [],
         contributedEnv: [],
         injectedSkillSources: [],
@@ -2534,6 +2554,7 @@ describe("host-daemon command schemas", () => {
           providerId: "codex",
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
+          additionalWorkspaceFolders: [],
           dynamicTools: [],
           contributedEnv: [],
           injectedSkillSources: [],
