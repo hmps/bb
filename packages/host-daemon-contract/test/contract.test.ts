@@ -268,8 +268,8 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     projectSkillsTruncated: false,
     sharedSkills: [],
     folders: [
-      { path: "/work/app", isGitRepo: true },
-      { path: "/data/fixtures", isGitRepo: false },
+      { path: "/work/app", exists: true, isGitRepo: true },
+      { path: "/data/fixtures", exists: false, isGitRepo: false },
     ],
   },
   "host.delete_skill": {
@@ -1090,7 +1090,7 @@ describe("host-daemon command schemas", () => {
   });
 
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(278);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(280);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 
@@ -1128,7 +1128,9 @@ describe("host-daemon command schemas", () => {
     expect(contract.isCompatibleHostDaemonProtocolVersion(275)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(276)).toBe(false);
     expect(contract.isCompatibleHostDaemonProtocolVersion(277)).toBe(false);
-    expect(contract.isCompatibleHostDaemonProtocolVersion(278)).toBe(true);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(278)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(279)).toBe(false);
+    expect(contract.isCompatibleHostDaemonProtocolVersion(280)).toBe(true);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(247)).toBe(false);
     expect(contract.hostDaemonSupportsDesktopBrokerProof(248)).toBe(true);
   });
@@ -2941,6 +2943,7 @@ describe("host-daemon session schemas", () => {
 
     expect(
       hostDaemonSessionOpenResponseSchema.parse({
+        serverRoutes: { serverId: "srv_test", routes: [] },
         sessionId: "session_123",
         machineEnvironment: { revision: 0, entries: [] },
         idleProviderSessionTimeoutMinutes: 30,
@@ -2970,6 +2973,7 @@ describe("host-daemon session schemas", () => {
 
     expect(
       hostDaemonSessionOpenResponseSchema.parse({
+        serverRoutes: { serverId: "srv_test", routes: [] },
         sessionId: "session_default_shares",
         machineEnvironment: { revision: 0, entries: [] },
         idleProviderSessionTimeoutMinutes: 30,
@@ -2983,6 +2987,7 @@ describe("host-daemon session schemas", () => {
 
     expect(() =>
       hostDaemonSessionOpenResponseSchema.parse({
+        serverRoutes: { serverId: "srv_test", routes: [] },
         sessionId: "session_123",
         heartbeatIntervalMs: 5_000,
         leaseTimeoutMs: 30_000,

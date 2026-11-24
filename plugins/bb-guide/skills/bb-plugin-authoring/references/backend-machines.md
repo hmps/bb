@@ -218,10 +218,31 @@ provides no retention or keep controls.
 
 ## Server access
 
-`bb.experimental_serverAccess.register` declares how a new machine reaches
-this server: `id`, `displayName`, `description`, `availability()`,
-`acquire({ key, hostId, signal })` returning a `ServerAccessGrant` or
-`{ status: "failed", message }`, and `release({ key, hostId, grantId })`.
+`bb.experimental_serverAccess.register` declares a route by which machines
+and apps reach this server: `id`, `displayName`, `description`, `routeKind`
+(`"local-network" | "private-overlay" | "relay" | "custom"`; core treats a
+plugin built before SDK 0.6.188 that omits it as `"custom"`), `availability()`, `acquire({ key, hostId, signal })`
+returning a `ServerAccessGrant` or `{ status: "failed", message }`, and
+`release({ key, hostId, grantId })`. The ids `direct` and `local-network`
+are reserved for core.
+
+Every available provider is a route; core has no separate on/off for plugin
+routes, so a plugin stops offering its route by reporting it unavailable or
+needing setup (for example when the user turns the feature off in the plugin's
+own settings). Routes follow the user's order from Settings → Machines → How
+devices reach this server or `bb server access order`. After that, with the
+`serverRoutes` experiment on, core ranks them by `routeKind` (local network,
+private overlay such as a tailnet, relay, custom); with it off, by plugin
+install order with Manual last. A new machine is installed with the first
+working route in that order, and with `local-network` only when nothing else
+works. With the experiment on, each connected machine also acquires a grant
+from every available provider when its session opens, and core sends the daemon
+all of them with their own headers. Only available routes are advertised, and
+their hostnames pass the server's host and origin checks.
+Core stores the admitted addresses so they work from the first request after a
+restart; an address survives a failed or timed-out `availability()` and is
+dropped on a definite `unavailable`/`setup-required` answer or when the plugin
+is disabled or removed.
 
 Acquire is idempotent by key and returns
 `{ id, serverUrl, headers?: Record<string, string> }`; the grant serves
@@ -234,10 +255,8 @@ interrupted; core retries release by key and hostId. Keep intent and
 credential-bearing grants in private plugin storage. Never put credentials in
 machine inputs, resources, or progress output.
 
-Machines settings select the default provider. Without a saved selection,
-core uses the provider of the earliest-installed plugin, or direct when none
-are registered, and it keeps the selected provider for later enrollment of the
-same machine.
+Providers of one `routeKind` rank by the earliest-installed plugin, not load
+order. Core keeps a machine's install route for its later enrollment.
 The direct provider reads `machineServerUrl`, falling back to
 `BB_EXTERNAL_URL`. Declaring a URL does not prove reachability from a sandbox.
 
@@ -246,9 +265,10 @@ configuration, which checks provider availability in parallel with a
 five-second deadline per check; invalid output, exceptions, and timeouts
 appear unavailable. Machines settings, manual setup, and promptbox banners use
 that status; a registered provider alone is not ready. Availability's optional
-public `serverUrl` is validated and displayed in Machines settings, and while
-the provider is available core's Host and Origin guards admit its origin, so
-browsers and machines can use it without `BB_APP_URL`. Reading configuration
+public `serverUrl` is validated and displayed in Settings → Machines, and
+while the provider is available core's Host and Origin guards
+admit its origin (also with the `serverRoutes` experiment off), so browsers and
+machines can use it without `BB_APP_URL`. Reading configuration
 never acquires access; the grant's URL is the one machines use.
 
 ## Create steps and holds
@@ -285,9 +305,24 @@ environments without a thread.
 asked for. Its project, machine, provider selection, name and holder are
 stored on the environment, and core runs it, setup included, on the same
 create path threads use; restart resumes it on the same setup operation. A
-user hold keeps the environment until the user deletes it and lets threads
-join it; it is never retired for having no threads. Environment responses
-carry `heldBy` (`"user"` or null) and `statusMessage`, and
-`sdk.environments.list({ heldBy })` filters by holder. Environment responses
+held environment is never retired for having no threads. `hold: "user"` keeps
+it until the user deletes it and lets threads join it. `hold: "plugin"` holds
+it for the calling plugin, and threads cannot join it ("held by <plugin>").
+Disabling or uninstalling that plugin releases its holds, and the environments
+retire like any other.
+That plugin's version-2 provider hands one to a new thread by calling
+`adopt(environmentId, resource)` in `create` and returning its path: core
+moves the thread onto it and records `resource` at once; the hold stays until
+create returns. Setup does not run again unless the provider then calls
+`setup(path)` with the adopted path, which starts setup at once (do this after
+changing the checkout). The resource create returns replaces the recorded one.
+If bb restarts before create returns, core discards the environment, removing
+it with the recorded resource, and provisions the thread again. A refused
+adopt changes nothing. After an adopt, a
+create that does not return `created` at that path fails the environment and
+its thread, and `remove()` later receives the recorded resource. Environment responses carry `heldBy`
+(`"user"`, `"plugin:<id>"` or null) and `statusMessage`, and
+`sdk.environments.list({ heldBy })` filters by holder. The Worktree plugin's
+warm pool is built on this. Environment responses
 expose only the read-only lifecycle projection: phase, retireAt, and
 teardown status/attempt/message.

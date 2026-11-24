@@ -1,7 +1,11 @@
 import { jsonValueSchema } from "./json-value.js";
+import { pluginIdSchema } from "./plugin-id.js";
 import { z } from "zod";
 
-export const environmentHolderSchema = z.literal("user");
+export const environmentHolderSchema = z.union([
+  z.literal("user"),
+  z.templateLiteral(["plugin:", pluginIdSchema]),
+]);
 export type EnvironmentHolder = z.infer<typeof environmentHolderSchema>;
 
 export const environmentMachineSelectionSchema = z.discriminatedUnion("type", [
@@ -116,6 +120,7 @@ export const environmentSchema = z.object({
   projectId: z.string(),
   hostId: z.string(),
   path: z.string().nullable(),
+  additionalPaths: z.array(z.string()),
   isGitRepo: z.boolean(),
   isWorktree: z.boolean(),
   branchName: z.string().nullable(),

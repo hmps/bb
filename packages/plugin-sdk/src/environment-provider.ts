@@ -97,6 +97,20 @@ export interface PluginEnvironmentProviderSteps {
    * Without a call, core runs setup after create returns.
    */
   setup(path: string): Promise<void>;
+  /**
+   * Hands this operation a ready environment this plugin holds, at once and
+   * atomically: the environment becomes the one this create produces, keeps
+   * its setup, and takes `resource`, which `remove()` receives if create never
+   * returns. The hold is cleared when create returns. Rejects when the
+   * environment is not a ready one this plugin holds on the same project and
+   * machine; then nothing changed. Setup does not run again unless
+   * `setup(path)` is called afterwards with the adopted path, which starts it
+   * at once. A `created` result must name its path; any other outcome leaves
+   * the environment in error, and its thread fails. If bb restarts before
+   * create returns, the environment is removed and the thread is provisioned
+   * again.
+   */
+  adopt(environmentId: string, resource: JsonValue): Promise<void>;
 }
 
 export interface PluginEnvironmentProviderCreateContext<
@@ -133,6 +147,14 @@ export type PluginEnvironmentProviderCreateResult =
       ownsPath: boolean;
       /** Ref the workspace's changes are compared against. Null clears the value recorded on a reused environment; omit to keep it. */
       mergeBaseBranch?: string | null;
+      /**
+       * Experimental: absolute paths of this environment's own extra folders,
+       * such as sibling checkouts it created next to `path`. Threads in the
+       * environment can read and write them. Core records them with the
+       * environment; omit on a reused environment to keep the recorded list.
+       * See docs/api_to_audit.md.
+       */
+      additionalPaths?: string[];
       resource?: JsonValue;
     }
   | { status: "failed"; message: string };

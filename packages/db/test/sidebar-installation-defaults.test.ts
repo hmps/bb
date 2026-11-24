@@ -21,8 +21,11 @@ import {
   dropEnvironmentHoldColumns,
   dropForkHistoryCopyIndex,
   dropQueuedMessageRecheckAtColumn,
+  dropProjectFolderSchema,
   dropThreadSearchOrderIndex,
+  rewindThreadPurgeStartedColumn,
   dropThreadRunStateTables,
+  dropServerAccessRouteTables,
   dropThreadStatusChangedAtColumn,
   dropQueuedMessageEditHeldUntilColumn,
 } from "./helpers/rewind.js";
@@ -105,13 +108,16 @@ describe.each(["project", "thread", "preference"] as const)(
           dropQueuedMessageDeliveryColumns(db);
           dropThreadStatusChangedAtColumn(db);
           dropThreadRunStateTables(db);
+          dropServerAccessRouteTables(db);
           dropPluginFailureLabelColumns(db);
           rewindMachineTeardownRecoveryColumns(db);
           dropPluginMarketplaceEnabledColumn(db);
           dropQueuedMessageRecheckAtColumn(db);
+          dropProjectFolderSchema(db);
           dropForkHistoryCopyIndex(db);
           dropEnvironmentHoldColumns(db);
           dropThreadSearchOrderIndex(db);
+          rewindThreadPurgeStartedColumn(db);
           db.$client
             .prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?")
             .run(SIDEBAR_INSTALLATION_DEFAULTS_MIGRATION_TIMESTAMP);

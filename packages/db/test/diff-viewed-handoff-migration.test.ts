@@ -7,8 +7,11 @@ import {
   dropEnvironmentHoldColumns,
   dropForkHistoryCopyIndex,
   dropQueuedMessageRecheckAtColumn,
+  dropProjectFolderSchema,
   dropThreadSearchOrderIndex,
+  rewindThreadPurgeStartedColumn,
   dropThreadRunStateTables,
+  dropServerAccessRouteTables,
   restoreDiffViewedFilesTable,
 } from "./helpers/rewind.js";
 
@@ -21,13 +24,16 @@ function databaseBeforeHandoff(
   migrate(db);
   restoreDiffViewedFilesTable(db);
   dropThreadRunStateTables(db);
+  dropServerAccessRouteTables(db);
   dropPluginFailureLabelColumns(db);
   rewindMachineTeardownRecoveryColumns(db);
   dropPluginMarketplaceEnabledColumn(db);
   dropQueuedMessageRecheckAtColumn(db);
+  dropProjectFolderSchema(db);
   dropForkHistoryCopyIndex(db);
   dropEnvironmentHoldColumns(db);
   dropThreadSearchOrderIndex(db);
+  rewindThreadPurgeStartedColumn(db);
   db.$client.pragma("foreign_keys = OFF");
   const insert = db.$client.prepare(
     "INSERT INTO diff_viewed_files (environment_id, target_key, path, revision, updated_at) VALUES (?, ?, ?, ?, ?)",

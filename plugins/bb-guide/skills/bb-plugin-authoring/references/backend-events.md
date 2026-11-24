@@ -129,11 +129,11 @@ periodically.
 ### bb.experimental_hooks — the dispatch checkpoint
 
 **Hooks are questions core asks.** Core stops, hands your handler a context, and
-acts on what you return. There is one hook, `"message.dispatch"`
-(`PluginHookName`), the admission checkpoint every message passes through
-exactly once per attempt: a thread's first message, a follow-up, a steer, a
-drained queue row, a retry of a failed turn. Two members: `on` answers the
-question, and `recheck("message.dispatch")` asks core to ask it again.
+acts on what you return. `"thread.delete_finalize"` is in backend-sdk.md; this
+one, `"message.dispatch"`, is the admission checkpoint every message passes
+through exactly once per attempt: a thread's first message, a follow-up, a
+steer, a drained queue row, a retry of a failed turn. Two members: `on` answers
+the question, and `recheck("message.dispatch")` asks core to ask it again.
 
 ```ts
 bb.experimental_hooks.on("message.dispatch", (ctx) => {
@@ -296,6 +296,8 @@ at that path, a reported `mergeBaseBranch` replaces the recorded one, `null`
 clears it, and omitting it keeps it; a failed create is terminal, and a retry is
 an explicit new attempt on the same environment row after cleanup. `report.step`
 and `report.log` stream durable progress while the call runs.
+
+Experimental: a `created` result (also from `restore`) may list `additionalPaths`, absolute folders of this environment outside `path` (sibling checkouts); threads there can write them, core stores them as `Environment.additionalPaths`, and omitting the field on a reused environment keeps the list. See docs/api_to_audit.md.
 
 Core claims a provider's directory through `locate` or `setup(path)`.
 `bb.sdk.environments.list({ hostId, path })` compares stored paths without

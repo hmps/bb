@@ -229,7 +229,7 @@ export interface PluginAgentToolRecord {
   ): PluginAgentToolResult | Promise<PluginAgentToolResult>;
 }
 
-interface PluginMentionProviderRecord {
+export interface PluginMentionProviderRecord {
   id: string;
   label: string;
   triggers: readonly PluginMentionTrigger[];
@@ -372,6 +372,11 @@ function wrapSdkForPlugin(
     environments: {
       ...sdk.environments,
       ...createRetiredEnvironmentMembers(sdk.plugins.callRpc),
+      experimental_create(args) {
+        return sdk.environments.experimental_create(
+          args.hold === "user" ? args : { ...args, pluginId },
+        );
+      },
     },
     threads: {
       ...sdk.threads,
@@ -646,6 +651,7 @@ export function createPluginApi(options: {
   };
   const hooks: PluginHookRecords = {
     "message.dispatch": null,
+    "thread.delete_finalize": null,
   };
   const environmentCompositions = new Map<
     string,
@@ -1221,13 +1227,12 @@ export function createPluginApi(options: {
     },
     async recheck(hook) {
       assertLive();
-      // One hook key exists; the parameter selects which question to re-pose
-      // and widens additively when a second key ever ships.
-      void hook;
-      // Resolves on SCHEDULING. The walk runs on a later macrotask, and the
-      // caller is not the one it reports to — a failed re-attempt lands on the
-      // row it failed, like every other background drain.
-      requestQueueDrain();
+      // `thread.delete_finalize` is asked again on every purge pass, so only
+      // `message.dispatch` has a re-attempt to schedule. Resolves on
+      // SCHEDULING. The walk runs on a later macrotask, and the caller is not
+      // the one it reports to — a failed re-attempt lands on the row it
+      // failed, like every other background drain.
+      if (hook === "message.dispatch") requestQueueDrain();
     },
   };
 
@@ -1321,7 +1326,7 @@ export function createPluginApi(options: {
     {
       register(declaration) {
         assertLive();
-        validateServerAccessProviderDeclaration(declaration);
+        const provider = validateServerAccessProviderDeclaration(declaration);
         if (
           serverAccessProviders.has(declaration.id) ||
           listServerAccessProviders().some(
@@ -1334,7 +1339,7 @@ export function createPluginApi(options: {
             `Server access provider "${declaration.id}" is already registered`,
           );
         }
-        serverAccessProviders.set(declaration.id, declaration);
+        serverAccessProviders.set(provider.id, provider);
       },
       recheck() {
         assertLive();

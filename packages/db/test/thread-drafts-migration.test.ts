@@ -22,8 +22,11 @@ import {
   dropEnvironmentHoldColumns,
   dropForkHistoryCopyIndex,
   dropQueuedMessageRecheckAtColumn,
+  dropProjectFolderSchema,
   dropThreadSearchOrderIndex,
+  rewindThreadPurgeStartedColumn,
   dropThreadRunStateTables,
+  dropServerAccessRouteTables,
   dropThreadStatusChangedAtColumn,
   dropQueuedMessageEditHeldUntilColumn,
 } from "./helpers/rewind.js";
@@ -131,13 +134,16 @@ it.each([false, true])(
       dropQueuedMessageDeliveryColumns(db);
       dropThreadStatusChangedAtColumn(db);
       dropThreadRunStateTables(db);
+      dropServerAccessRouteTables(db);
       dropPluginFailureLabelColumns(db);
       rewindMachineTeardownRecoveryColumns(db);
       dropPluginMarketplaceEnabledColumn(db);
       dropQueuedMessageRecheckAtColumn(db);
+      dropProjectFolderSchema(db);
       dropForkHistoryCopyIndex(db);
       dropEnvironmentHoldColumns(db);
       dropThreadSearchOrderIndex(db);
+      rewindThreadPurgeStartedColumn(db);
       migrate(db);
       migrate(db);
 

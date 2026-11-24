@@ -144,10 +144,12 @@ import {
   type PluginAgentToolRecord,
   type PluginCliContext,
   type PluginHttpRouteRecord,
+  type PluginMentionProviderRecord,
   type PluginMentionTrigger,
   type PluginRpcHandler,
   type PluginWebSocketRouteRecord,
 } from "./plugin-api.js";
+import { createMentionSearchSlots } from "./plugin-mention-search-slots.js";
 import type { PluginRpcCallerResolution } from "./plugin-rpc-caller.js";
 import {
   syncPluginCommandsSkill,
@@ -502,6 +504,7 @@ export interface PluginService {
     query: string;
     projectId: string | null;
     threadId: string | null;
+    signal: AbortSignal;
   }): Promise<PluginMentionSearchGroup[]>;
   resolveMention(args: {
     pluginId: string;
@@ -672,6 +675,10 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
   }
   const mentionSearchTimeoutMs =
     deps.mentionSearchTimeoutMs ?? DEFAULT_MENTION_SEARCH_TIMEOUT_MS;
+  const mentionSearches = createMentionSearchSlots<
+    PluginMentionProviderRecord,
+    Awaited<ReturnType<PluginMentionProviderRecord["search"]>>
+  >(mentionSearchTimeoutMs);
   const mentionResolveTimeoutMs =
     deps.mentionResolveTimeoutMs ?? DEFAULT_MENTION_RESOLVE_TIMEOUT_MS;
   const providerEnvResolveTimeoutMs =
@@ -1592,6 +1599,7 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
       listHooks: listPluginHooks,
       invokeHook: invokeOwned,
       decisionTimeoutMs: DEFAULT_PLUGIN_HOOK_TIMEOUT_MS,
+      isLoadingPlugins: () => loadPassActive,
     },
 
     environmentProviders: {
@@ -2738,22 +2746,24 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
               const outcome = await invokeWrapped(
                 plugin,
                 `mention search ${record.id}`,
-                async () => {
-                  const searchPromise = (async () =>
-                    record.search({
-                      trigger: args.trigger,
-                      query: args.query,
-                      projectId: args.projectId,
-                      threadId: args.threadId,
-                    }))();
-                  searchPromise.catch(() => {});
-                  const result = await raceTimeout(
-                    searchPromise,
-                    mentionSearchTimeoutMs,
-                    `timed out after ${mentionSearchTimeoutMs}ms`,
+                async (signal) => {
+                  const result = await mentionSearches.search(
+                    record,
+                    (searchSignal) =>
+                      record.search({
+                        trigger: args.trigger,
+                        query: args.query,
+                        projectId: args.projectId,
+                        threadId: args.threadId,
+                        experimental_signal: searchSignal,
+                      }),
+                    signal,
                   );
-                  return normalizeMentionSearchItems(record.id, result);
+                  return result === null
+                    ? []
+                    : normalizeMentionSearchItems(record.id, result);
                 },
+                args.signal,
               );
               if (!outcome.ok || outcome.value.length === 0) return null;
               return {

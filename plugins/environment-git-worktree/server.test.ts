@@ -93,6 +93,9 @@ async function setup(
     setup: async (path) => {
       order.push(`setup ${path}`);
     },
+    adopt: async (id) => {
+      order.push(`adopt ${id}`);
+    },
     attempt: 1,
     pathKey: THREAD_ID,
     report,
@@ -128,6 +131,7 @@ function restoreContext(
         projectId: PROJECT_ID,
         hostId: HOST_ID,
         path: WORKTREE_PATH,
+        additionalPaths: [],
         isGitRepo: true,
         isWorktree: true,
         branchName,

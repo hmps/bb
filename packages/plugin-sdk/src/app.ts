@@ -257,6 +257,9 @@ export const experimental_ImageLightbox = runtimeComponent(
 export const experimental_PromptMentionIcon = runtimeComponent(
   "experimental_PromptMentionIcon",
 );
+export const experimental_useCommandShortcut = runtimeFunction(
+  "experimental_useCommandShortcut",
+);
 export const experimental_matchesShortcutKey = runtimeFunction(
   "experimental_matchesShortcutKey",
 );
@@ -284,6 +287,9 @@ export const useComposerView = runtimeFunction("useComposerView");
 // see docs/api_to_audit.md).
 export const experimental_useSidebarThreads = runtimeFunction(
   "experimental_useSidebarThreads",
+);
+export const experimental_useThread = runtimeFunction(
+  "experimental_useThread",
 );
 /** @internal Superseded by the thread action registry, `experimental_useThreadRequests()`, `useSdk().threads`, and `useBbNavigate()`; kept for plugins built against older SDKs. */
 export const experimental_useSidebarThreadActions = runtimeFunction(
@@ -377,6 +383,9 @@ export const experimental_useCodeTheme = runtimeFunction(
 // see docs/api_to_audit.md).
 export const experimental_copyToClipboard = runtimeFunction(
   "experimental_copyToClipboard",
+);
+export const experimental_showErrorToast = runtimeFunction(
+  "experimental_showErrorToast",
 );
 export const experimental_saveFile = runtimeFunction("experimental_saveFile");
 

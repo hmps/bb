@@ -140,6 +140,18 @@ export function dropThreadRunStateTables(db: DbConnection): void {
   );
 }
 
+export function dropServerAccessRouteTables(db: DbConnection): void {
+  db.$client.exec("DROP TABLE IF EXISTS host_server_access_grants");
+  const sessionColumns = db.$client
+    .prepare<[], { name: string }>("PRAGMA table_info(host_daemon_sessions)")
+    .all();
+  for (const column of ["route_provider_id", "route_kind"]) {
+    if (sessionColumns.some((existing) => existing.name === column)) {
+      db.$client.exec(`ALTER TABLE host_daemon_sessions DROP COLUMN ${column}`);
+    }
+  }
+}
+
 export function dropPluginFailureLabelColumns(db: DbConnection): void {
   for (const [table, column] of [
     ["plugins", "last_failure_label"],
@@ -184,9 +196,12 @@ export function rewindQueuedMessageRecheckAtMigration(db: DbConnection): void {
   db.$client
     .prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?")
     .run(QUEUED_MESSAGE_RECHECK_AT_MIGRATION_TIMESTAMP);
+  rewindThreadPurgeStartedColumn(db);
   dropThreadSearchOrderIndex(db);
   dropForkHistoryCopyIndex(db);
   dropQueuedMessageRecheckAtColumn(db);
+  dropProjectFolderSchema(db);
+  dropServerAccessRouteTables(db);
 }
 
 export function dropQueuedMessageRecheckAtColumn(db: DbConnection): void {
@@ -198,6 +213,16 @@ export function dropQueuedMessageRecheckAtColumn(db: DbConnection): void {
     db.$client.exec(
       "ALTER TABLE queued_thread_messages DROP COLUMN recheck_at",
     );
+  }
+}
+
+export function dropProjectFolderSchema(db: DbConnection): void {
+  db.$client.exec("DROP TABLE IF EXISTS project_source_folders");
+  const columns = db.$client
+    .prepare<[], { name: string }>("PRAGMA table_info(environments)")
+    .all();
+  if (columns.some((column) => column.name === "additional_paths")) {
+    db.$client.exec("ALTER TABLE environments DROP COLUMN additional_paths");
   }
 }
 
@@ -216,6 +241,15 @@ export function dropEnvironmentHoldColumns(db: DbConnection): void {
 
 export function dropThreadSearchOrderIndex(db: DbConnection): void {
   db.$client.exec("DROP INDEX IF EXISTS `threads_search_order_idx`");
+}
+
+export function rewindThreadPurgeStartedColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], { name: string }>("PRAGMA table_info(thread_purges)")
+    .all();
+  if (columns.some((existing) => existing.name === "started_at")) {
+    db.$client.exec("ALTER TABLE thread_purges DROP COLUMN started_at");
+  }
 }
 
 export function restoreDiffViewedFilesTable(db: DbConnection): void {

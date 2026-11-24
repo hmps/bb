@@ -38,6 +38,7 @@ export function makeEnvironment(
     projectId: "proj_test",
     hostId: "host_test",
     path: "/workspace",
+    additionalPaths: [],
     isGitRepo: true,
     isWorktree: true,
     branchName: "feature/test",
@@ -78,6 +79,7 @@ export function makeHost(overrides: Partial<Host> = {}): Host {
       teardown: null,
     },
     lastSeenAt: null,
+    route: null,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,
     createdAt: 0,
@@ -180,6 +182,7 @@ export function makeThreadListEntry(
       titleFallback: null,
     }),
     pinSortKey: null,
+    statusChangedAt: 100,
     activity: {
       activeWorkflowCount: 0,
       activeBackgroundAgentCount: 0,

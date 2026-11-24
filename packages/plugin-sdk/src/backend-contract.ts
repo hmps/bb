@@ -24,6 +24,8 @@ import type * as z from "zod";
 import type { ProviderFork } from "@bb/domain/provider-fork";
 import type {
   BbSdk,
+  EnvironmentCreateArgs,
+  EnvironmentCreateResult,
   PluginThreadMetadataListArgs,
   PluginThreadMetadataListResult,
   ThreadPluginMetadataArgs,
@@ -528,10 +530,25 @@ export interface ServerAccessGrant {
   headers?: Record<string, string>;
 }
 
+export type ServerAccessRouteKind =
+  | "local-network"
+  | "private-overlay"
+  | "relay"
+  | "custom";
+
 export interface ServerAccessProviderDeclaration {
   id: string;
   displayName: string;
   description: string;
+  /**
+   * How machines and apps travel to this server over the provider's address.
+   * Core ranks enabled routes by kind (local network, private overlay such as
+   * a tailnet, relay, then custom) until the user orders them in Settings.
+   * New machines install on a `"relay"` or `"custom"` route before a
+   * `"local-network"` or `"private-overlay"` one. Plugins built against an SDK
+   * before 0.6.188 may omit it; core treats those as `"custom"`.
+   */
+  routeKind: ServerAccessRouteKind;
   availability():
     | (import("./machine-provider.js").PluginMachineProviderAvailability & {
         serverUrl?: string;
@@ -776,19 +793,50 @@ export interface MessageDispatchHookContext {
  * derive from this map — and so does the server's hook registry — so a
  * half-added hook does not compile.
  *
- * One hook today: `message.dispatch`, THE admission checkpoint, run identically
- * for a thread's first message, a follow-up, a steer, a retry, and every
- * re-attempt a drain makes. It replaced the earlier `thread.create` +
- * `turn.submit` pair, whose split was an accident of where the code happened to
- * branch rather than a difference a plugin needed to see — the attempt's own
- * `attempt` kind carries what actually differs.
+ * `message.dispatch` is THE admission checkpoint, run identically for a
+ * thread's first message, a follow-up, a steer, a retry, and every re-attempt a
+ * drain makes. It replaced the earlier `thread.create` + `turn.submit` pair,
+ * whose split was an accident of where the code happened to branch rather than
+ * a difference a plugin needed to see — the attempt's own `attempt` kind
+ * carries what actually differs.
+ *
+ * `thread.delete_finalize` runs before core finishes deleting a thread by
+ * removing its rows from the database, so a plugin can copy the thread first.
  */
 export interface PluginHookSignatures {
   "message.dispatch": {
     context: MessageDispatchHookContext;
     decision: MessageDispatchHookDecision;
   };
+  "thread.delete_finalize": {
+    context: ThreadDeleteFinalizeHookContext;
+    decision: ThreadDeleteFinalizeHookDecision;
+  };
 }
+
+/**
+ * A deleted thread core is about to remove from the database. The thread is
+ * already hidden and can no longer change, and every read that works on a
+ * thread id, such as `bb.sdk.threads.experimental_export`, still works until
+ * the removal starts.
+ */
+export interface ThreadDeleteFinalizeHookContext {
+  threadId: string;
+  projectId: string;
+}
+
+/**
+ * `proceed` lets core remove the rows. `wait` keeps them: core asks again
+ * about every 10 seconds and on every restart, until every plugin answers
+ * `proceed`. Once the removal starts core never asks about that thread again.
+ *
+ * A handler that throws, times out or returns something else counts as
+ * `wait`. A plugin that is disabled or uninstalled is not asked, so its
+ * threads are removed without it.
+ */
+export type ThreadDeleteFinalizeHookDecision =
+  | { action: "proceed" }
+  | { action: "wait" };
 
 export type PluginHookName = keyof PluginHookSignatures;
 
@@ -808,6 +856,9 @@ export interface PluginHooks {
    * return value is ignored. It is the same split git draws between its
    * pre-commit and post-commit hooks, and the reason the two live in separate
    * namespaces rather than behind one `on`.
+   *
+   * The rules below describe `message.dispatch`; `thread.delete_finalize`
+   * has its own, on {@link ThreadDeleteFinalizeHookDecision}.
    *
    * Handlers for a hook run as a deterministic chain in plugin install order,
    * a `reject` short-circuits the pass, and `wait` decisions are COLLECTED
@@ -860,6 +911,9 @@ export interface PluginHooks {
    * rows, exactly as the due sweep's do. Awaiting completion would also mean
    * awaiting a full hook pass from inside whatever called this, which for a
    * handler holding the evaluation lock could not complete. Fire and forget.
+   *
+   * `thread.delete_finalize` needs no recheck: core asks it again about every
+   * 10 seconds.
    */
   recheck(hook: PluginHookName): Promise<void>;
 }
@@ -1876,6 +1930,14 @@ export interface PluginMentionSearchContext {
   query: string;
   projectId: string | null;
   threadId: string | null;
+  /**
+   * Aborts when the search is no longer wanted: the person typed past it and
+   * the composer cancelled the request, the 2s time box ran out, or this
+   * plugin instance is reloaded, disabled or removed. Pass it to `fetch` or
+   * check it between steps; the host ignores whatever a search returns after
+   * its signal aborts.
+   */
+  experimental_signal: AbortSignal;
 }
 
 /** One row a mention provider returns from `search`. `id` is the provider's
@@ -1914,7 +1976,11 @@ export interface PluginMentionProviderRegistration {
    * Runs server-side as the user types after one of this provider's triggers
    * in the composer. Each call is time-boxed (2s) and failure-isolated: a slow
    * or throwing provider contributes an empty list — it can never break the
-   * mention menu.
+   * mention menu. A provider runs one search at a time: a query typed while a
+   * search is running waits for it, and only the newest waiting query runs.
+   * A search still running after its time box keeps the provider out of
+   * results until it settles. Stop work when `ctx.experimental_signal` aborts
+   * so the next query starts sooner.
    */
   search(
     ctx: PluginMentionSearchContext,
@@ -2163,9 +2229,17 @@ export interface PluginStatusApi {
  * dashes) or the request fails with HTTP 400. A `pluginMetadata` seed or a
  * `set` that is over 256 KiB on its own rejects before any request is sent. A
  * patch whose merged namespace would exceed 256 KiB fails with HTTP 413 and
- * leaves the namespace unchanged.
+ * leaves the namespace unchanged. `environments.experimental_create` with
+ * `hold: "plugin"` always holds the environment for the calling plugin.
  */
-export type PluginBbSdk = Omit<BbSdk, "threads"> & {
+export type PluginBbSdk = Omit<BbSdk, "threads" | "environments"> & {
+  environments: Omit<BbSdk["environments"], "experimental_create"> & {
+    experimental_create(
+      args:
+        | Extract<EnvironmentCreateArgs, { hold: "user" }>
+        | Omit<Extract<EnvironmentCreateArgs, { hold: "plugin" }>, "pluginId">,
+    ): Promise<EnvironmentCreateResult>;
+  };
   threads: Omit<
     BbSdk["threads"],
     | "getPluginMetadata"

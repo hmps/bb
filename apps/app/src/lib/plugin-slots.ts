@@ -1,5 +1,6 @@
 import { coreTabs } from "@/components/secondary-panel/thread-info-registration";
-import { coreMessageMetadata } from "@/components/thread/timeline/core-message-metadata";
+import coreMessageTime from "@/core-contributions/message-time";
+import { collectCoreContributionSlots } from "@/lib/core-contributions";
 import { setAppIcons } from "@bb/shared-ui/icon-registry";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { usePluginFrontendsSettled } from "@/lib/plugin-frontend-boot-state";
@@ -51,6 +52,11 @@ import {
   type CollectedSidebarNavigationRegistration,
   type CollectedThreadContextCardSectionRegistration,
 } from "@get-bb/plugin-sdk/internal/plugin-app-collector";
+
+const coreMessageMetadata = collectCoreContributionSlots(
+  coreMessageTime,
+  "messageMetadata",
+);
 
 export interface PluginRegistrationSet {
   homepageSections: readonly PluginHomepageSectionRegistration[];
@@ -706,15 +712,31 @@ export function usePluginFrontendRegistered(pluginId: string): boolean {
 let builtinPluginIds: ReadonlySet<string> = new Set();
 const builtinPluginIdListeners = new Set<() => void>();
 
+let officialMarketplacePluginIds: ReadonlySet<string> = new Set();
+let bbPluginIds: ReadonlySet<string> = new Set();
+
+function sameIds(left: ReadonlySet<string>, right: ReadonlySet<string>) {
+  return left.size === right.size && [...left].every((id) => right.has(id));
+}
+
+function updateBbPluginIds(): void {
+  const next = new Set([...builtinPluginIds, ...officialMarketplacePluginIds]);
+  if (!sameIds(next, bbPluginIds)) bbPluginIds = next;
+}
+
 export function setBuiltinPluginIds(ids: Iterable<string>): void {
   const next = new Set(ids);
-  if (
-    next.size === builtinPluginIds.size &&
-    [...next].every((id) => builtinPluginIds.has(id))
-  ) {
-    return;
-  }
+  if (sameIds(next, builtinPluginIds)) return;
   builtinPluginIds = next;
+  updateBbPluginIds();
+  for (const listener of builtinPluginIdListeners) listener();
+}
+
+export function setOfficialMarketplacePluginIds(ids: Iterable<string>): void {
+  const next = new Set(ids);
+  if (sameIds(next, officialMarketplacePluginIds)) return;
+  officialMarketplacePluginIds = next;
+  updateBbPluginIds();
   for (const listener of builtinPluginIdListeners) listener();
 }
 
@@ -725,15 +747,25 @@ function subscribeBuiltinPluginIds(listener: () => void): () => void {
   };
 }
 
+export function useBbPluginIds(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    subscribeBuiltinPluginIds,
+    () => bbPluginIds,
+    () => bbPluginIds,
+  );
+}
+
 export function useBuiltinPluginIds(): ReadonlySet<string> {
   return useSyncExternalStore(
     subscribeBuiltinPluginIds,
+    () => builtinPluginIds,
     () => builtinPluginIds,
   );
 }
 
 export function resetPluginSlotStoreForTest(): void {
   setBuiltinPluginIds([]);
+  setOfficialMarketplacePluginIds([]);
   registrationsByPluginId.clear();
   generationByPluginId.clear();
   flattenedByPluginId.clear();

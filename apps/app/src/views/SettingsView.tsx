@@ -1,14 +1,10 @@
 import { ApplicationLinkApprovalsSettings } from "@/components/settings/ApplicationLinkApprovalsSettings";
+import { useOpenNewThread } from "@/hooks/useOpenNewThread";
 import { MobileAppSection } from "@/components/settings/MobileAppSection";
 import { MachineEnvironmentSettings } from "@/components/settings/MachineEnvironmentSettings";
 import { MachineAccessSettings } from "@/components/settings/MachineAccessSettings";
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  Navigate,
-  useNavigate,
-  useLocation,
-  matchPath,
-} from "react-router-dom";
+import { Navigate, useLocation, matchPath } from "react-router-dom";
 import "@bb/shared-ui/icon-extended";
 import {
   builtInThemes,
@@ -54,10 +50,12 @@ import {
 import { useHostDaemon, useLocalHostDaemonAccess } from "@/hooks/useHostDaemon";
 import { useAppThemePreview } from "@/hooks/useAppThemePreview";
 import { ProvidersSettingsSection } from "@/components/settings/ProvidersSettingsSection";
-import { CodeRendererSettings } from "@/components/settings/CodeRendererSettings";
-import { SidebarThreadListSetting } from "@/components/settings/SidebarThreadListSetting";
-import { SidebarNavigationProviderSetting } from "@/components/settings/SidebarNavigationProviderSetting";
 import { SidebarFooterSettings } from "@/components/settings/SidebarFooterSettings";
+import {
+  MarkdownRendererChoicesSection,
+  FileOpenerChoicesSection,
+  PluginSlotChoiceRows,
+} from "@/components/settings/PluginChoiceSettings";
 import { SplitDimmingSetting } from "@/components/settings/SplitDimmingSetting";
 import { useSettingsNavState } from "@/components/settings/settings-nav";
 import { useRevealSettingsSearchTarget } from "@/components/settings/useRevealSettingsSearchTarget";
@@ -65,7 +63,6 @@ import { PluginsOverview } from "@/components/plugin/PluginsOverview";
 import { PluginDetailPaneView } from "@/views/ToolsView";
 import { SETTINGS_PLUGIN_ROUTE_PATH } from "@/lib/route-paths";
 import { PluginSettingsPage } from "@/components/plugin/PluginSettings";
-import { FileOpenersSettingsSection } from "@/components/settings/FileOpenersSettingsSection";
 import { VoiceInputSettingsSection } from "@/components/settings/VoiceInputSettingsSection";
 import { AiServicesSettingsSection } from "@/components/settings/AiServicesSettingsSection";
 import { CommunitySettingsSection } from "@/components/settings/CommunitySettingsSection";
@@ -94,10 +91,7 @@ import {
 import { useOpenLinksInAppBrowserPreference } from "@/lib/in-app-browser-link-preference";
 import { useRewriteLocalhostLinksPreference } from "@/lib/localhost-link-rewrite-preference";
 import { localhostLinkRewriteDescription } from "@/lib/localhost-link-rewrite-description";
-import {
-  SETTINGS_ROUTE_PATH,
-  getRootComposeRoutePath,
-} from "@/lib/route-paths";
+import { SETTINGS_ROUTE_PATH } from "@/lib/route-paths";
 import { useNavigateToThreadAfterCreatePreference } from "@/lib/root-compose-create-preference";
 import { cn } from "@bb/shared-ui/lib/utils";
 import {
@@ -863,12 +857,11 @@ export function AppearanceSettingsSection({
       </SettingsSection>
       <SettingsSection title="Interface">
         <div className="space-y-5">
-          <SidebarNavigationProviderSetting />
-          <SidebarThreadListSetting />
-          <CodeRendererSettings />
+          <PluginSlotChoiceRows />
           <SidebarFooterSettings />
         </div>
       </SettingsSection>
+      <MarkdownRendererChoicesSection />
     </div>
   );
 }
@@ -1178,6 +1171,11 @@ const EXPERIMENT_DEFINITIONS: Record<
     description:
       "When a machine's connection to the server drops for under 30 seconds, it picks up where it left off instead of reconnecting from scratch, so its terminals and running requests carry on. Applies from the next drop.",
   },
+  serverRoutes: {
+    label: "Reach machines over several routes",
+    description:
+      "Machines learn every route in Settings → Machines (such as bb connect, Tailscale, the local network or your own address) and connect over the highest one in your order that answers, moving to the next when it stops working. Lets you add a Local network route. Applies when each machine next connects.",
+  },
 
   serverMove: {
     label: "Server move",
@@ -1291,7 +1289,7 @@ export function ExperimentsSettingsSection({
 }
 
 export function SettingsView() {
-  const navigate = useNavigate();
+  const openNewThread = useOpenNewThread();
   const themePreference = useThemePreference();
   const systemConfigQuery = useSystemConfig();
   const { hasDaemon } = useHostDaemon();
@@ -1381,11 +1379,9 @@ export function SettingsView() {
         onAppearanceThemePrefetch={appThemePreview.prefetchThemes}
         onAppearanceThemePreview={appThemePreview.previewTheme}
         onCreatePalette={() =>
-          void navigate(getRootComposeRoutePath(), {
-            state: {
-              focusPrompt: true,
-              initialPrompt: CREATE_CUSTOM_PALETTE_PROMPT,
-            },
+          openNewThread({
+            focusPrompt: true,
+            initialPrompt: CREATE_CUSTOM_PALETTE_PROMPT,
           })
         }
         onFaviconColorChange={(faviconColor) =>
@@ -1414,7 +1410,7 @@ export function SettingsView() {
           onRequestAccess={requestAccess}
           targets={workspaceOpenTargets}
         />
-        <FileOpenersSettingsSection />
+        <FileOpenerChoicesSection />
       </>
     );
   } else if (activeSection === "projects") {
