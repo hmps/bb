@@ -30,6 +30,7 @@ interface PendingInteractionShellProps {
   label: string;
   title?: string;
   expandedByDefault: boolean;
+  allowFullHeight?: boolean;
   errorMessage?: string | null;
   footer?: ReactNode;
   children?: (isExpanded: boolean) => ReactNode;
@@ -40,6 +41,7 @@ export function PendingInteractionShell({
   label,
   title,
   expandedByDefault,
+  allowFullHeight = false,
   errorMessage,
   footer,
   children,
@@ -54,7 +56,8 @@ export function PendingInteractionShell({
     if (expandedByDefault) setIsExpanded(true);
   }
   const [isFullHeightRequested, setIsFullHeightRequested] = useState(false);
-  const isFullHeight = inline === null && isExpanded && isFullHeightRequested;
+  const isFullHeight =
+    allowFullHeight && inline === null && isExpanded && isFullHeightRequested;
   const rootRef = useRef<HTMLElement>(null);
   const availableHeight = useStickyFooterAvailableHeight(
     rootRef,
@@ -76,33 +79,38 @@ export function PendingInteractionShell({
       event.preventDefault();
       event.stopPropagation();
       setIsExpanded(false);
+      setIsFullHeightRequested(false);
       toggleRef.current?.focus();
     }
   };
-  const handleToggle = () => setIsExpanded((value) => !value);
+  const handleToggle = () => {
+    if (isExpanded) setIsFullHeightRequested(false);
+    setIsExpanded(!isExpanded);
+  };
   const fullHeightLabel = isFullHeight ? "Exit full height" : "Full height";
-  const fullHeightToggle = isExpanded ? (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            aria-controls={contentId}
-            aria-pressed={isFullHeight}
-            aria-label={fullHeightLabel}
-            onClick={() => setIsFullHeightRequested((value) => !value)}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <Icon
-              name={isFullHeight ? "Minimize2" : "Maximize2"}
-              className="size-3.5"
-            />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top">{fullHeightLabel}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  ) : null;
+  const fullHeightToggle =
+    allowFullHeight && isExpanded ? (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-controls={contentId}
+              aria-pressed={isFullHeight}
+              aria-label={fullHeightLabel}
+              onClick={() => setIsFullHeightRequested((value) => !value)}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <Icon
+                name={isFullHeight ? "Minimize2" : "Maximize2"}
+                className="size-3.5"
+              />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">{fullHeightLabel}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    ) : null;
   const toggle = (
     <button
       ref={toggleRef}
@@ -241,7 +249,9 @@ export function PendingInteractionShell({
               "min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 pb-3 pt-2.5",
               isFullHeight
                 ? "flex flex-1 flex-col"
-                : "max-h-[min(44rem,70dvh)]",
+                : allowFullHeight
+                  ? "max-h-[min(44rem,70dvh)]"
+                  : "max-h-[min(32rem,50dvh)]",
             )}
           >
             {title ? (

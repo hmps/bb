@@ -3,7 +3,13 @@ import {
   PendingInteractionShell,
 } from "@/components/thread/pending-interactions/PendingInteractionShell";
 import { usePendingInteractionCancel } from "@/components/thread/pending-interactions/usePendingInteractionCancel";
-import { useCallback, useContext, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "@bb/shared-ui/button";
 import type { JsonValue, PendingInteraction } from "@bb/domain";
 import { PluginSlotMount } from "./PluginSlotMount";
@@ -15,6 +21,8 @@ import {
   usePluginSlotKind,
 } from "@/lib/plugin-slots";
 import { sdk } from "@/lib/sdk";
+import { useQuestionFormHost } from "@/components/thread/user-questions/question-form-host-context";
+import { cn } from "@bb/shared-ui/lib/utils";
 
 export interface PluginPendingInteractionRequest {
   pluginId: string;
@@ -96,6 +104,7 @@ export function PluginPendingInteractionComposer({
       key={interaction.id}
       label={request.title}
       expandedByDefault={!collapsedByDefault}
+      allowFullHeight
       errorMessage={error}
       testId="plugin-interaction-shell"
     >
@@ -129,10 +138,7 @@ export function PluginPendingInteractionComposer({
                 </div>
               }
             >
-              <fieldset
-                disabled={submitting}
-                className="flex min-w-0 grow flex-col"
-              >
+              <PluginFormFieldset disabled={submitting}>
                 <slot.component
                   interaction={{
                     id: interaction.id,
@@ -145,7 +151,7 @@ export function PluginPendingInteractionComposer({
                   submit={submit}
                   cancel={cancel}
                 />
-              </fieldset>
+              </PluginFormFieldset>
             </PluginSlotMount>
           ) : pluginSettled ? (
             <div className="space-y-3">
@@ -175,5 +181,23 @@ export function PluginPendingInteractionComposer({
         </>
       )}
     </PendingInteractionShell>
+  );
+}
+
+function PluginFormFieldset({
+  disabled,
+  children,
+}: {
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const { fullHeight } = useQuestionFormHost();
+  return (
+    <fieldset
+      disabled={disabled}
+      className={cn("min-w-0", fullHeight && "flex grow flex-col")}
+    >
+      {children}
+    </fieldset>
   );
 }

@@ -3122,8 +3122,9 @@ Returns where a pending interaction form renders and the remappable answer
 shortcuts bb binds while it is open. `density` is `"compact"` in a parent
 thread's Active child threads card, and `promptShownAbove` is the question
 text that card already shows. `fullHeight` is true while the person has
-expanded the card to the full height of the thread pane with the card's
-header toggle; the form then gets a definite height to fill. `shortcuts`
+expanded a plugin card with its header toggle; the card then takes the space
+above the composer that it shares with other open cards, and the form gets a
+definite height to fill. `shortcuts`
 is keyed by option index, with `registerChoiceHandler` for a chosen index.
 `actionShortcuts` and `registerActionHandler` do the same for the form actions
 `submit`, `previous`, `next`, and `cancel` (`question.submit`,

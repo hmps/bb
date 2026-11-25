@@ -478,7 +478,8 @@ describe("PluginPendingInteractionComposer", () => {
     ).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Show details" }));
-    expect(screen.getByText("fills height")).toBeDefined();
+    expect(screen.getByText("fits content")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Full height" }));
     fireEvent.click(screen.getByRole("button", { name: "Exit full height" }));
     expect(screen.getByText("fits content")).toBeDefined();
   });
