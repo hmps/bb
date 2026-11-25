@@ -3677,6 +3677,7 @@ export function renderSlot<
     questionFormHost: {
       density: "default",
       promptShownAbove: null,
+      fullHeight: false,
       shortcuts: new Map(),
       actionShortcuts: new Map(),
       registerChoiceHandler: () => () => {},

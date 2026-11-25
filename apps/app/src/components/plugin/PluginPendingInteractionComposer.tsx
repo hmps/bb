@@ -129,7 +129,10 @@ export function PluginPendingInteractionComposer({
                 </div>
               }
             >
-              <fieldset disabled={submitting} className="min-w-0">
+              <fieldset
+                disabled={submitting}
+                className="flex min-w-0 grow flex-col"
+              >
                 <slot.component
                   interaction={{
                     id: interaction.id,

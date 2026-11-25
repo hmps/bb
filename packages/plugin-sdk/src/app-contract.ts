@@ -269,6 +269,12 @@ export interface ExperimentalQuestionFormHost {
    */
   promptShownAbove: string | null;
   /**
+   * True while the person has expanded the card to the full height of the
+   * thread pane. The form then gets a definite height: fill it, scroll long
+   * content inside, and keep the actions visible. False elsewhere.
+   */
+  fullHeight: boolean;
+  /**
    * Shortcut per zero-based option index, as a string (`"0"` is the first
    * option). Missing entries have no binding.
    */

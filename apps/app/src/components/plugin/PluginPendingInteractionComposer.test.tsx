@@ -439,6 +439,50 @@ describe("PluginPendingInteractionComposer", () => {
     },
   );
 
+  it("toggles the card to full height and tells the form", () => {
+    installPluginRuntime();
+    const useHost = experimental_useQuestionFormHost;
+    function Renderer() {
+      const host = useHost();
+      return <p>{host.fullHeight ? "fills height" : "fits content"}</p>;
+    }
+    setPluginSlotRegistrations(
+      "secrets",
+      registrations([{ id: "secret-request", component: Renderer }]),
+    );
+    renderComposer(
+      <PluginPendingInteractionComposer
+        collapsedByDefault={false}
+        interaction={interaction}
+        request={secretsRequest}
+        origin="plugin"
+      />,
+    );
+    const shell = screen.getByTestId("plugin-interaction-shell");
+    expect(screen.getByText("fits content")).toBeDefined();
+    expect(shell.hasAttribute("data-full-height")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Full height" }));
+    expect(screen.getByText("fills height")).toBeDefined();
+    expect(shell.hasAttribute("data-full-height")).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: "Exit full height" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide details" }));
+    expect(shell.hasAttribute("data-full-height")).toBe(false);
+    expect(
+      screen.queryByRole("button", { name: "Exit full height" }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    expect(screen.getByText("fills height")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Exit full height" }));
+    expect(screen.getByText("fits content")).toBeDefined();
+  });
+
   it("mounts only the renderer registered by the interaction's plugin", () => {
     function WrongRenderer() {
       return <div>wrong plugin renderer</div>;

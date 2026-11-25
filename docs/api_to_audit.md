@@ -3121,7 +3121,9 @@ Docs: `frontend-hooks-and-ui.md`.
 Returns where a pending interaction form renders and the remappable answer
 shortcuts bb binds while it is open. `density` is `"compact"` in a parent
 thread's Active child threads card, and `promptShownAbove` is the question
-text that card already shows. `shortcuts`
+text that card already shows. `fullHeight` is true while the person has
+expanded the card to the full height of the thread pane with the card's
+header toggle; the form then gets a definite height to fill. `shortcuts`
 is keyed by option index, with `registerChoiceHandler` for a chosen index.
 `actionShortcuts` and `registerActionHandler` do the same for the form actions
 `submit`, `previous`, `next`, and `cancel` (`question.submit`,
@@ -3129,7 +3131,8 @@ is keyed by option index, with `registerChoiceHandler` for a chosen index.
 fire from text fields inside an element marked `data-question-form`. Core's
 card uses `actionShortcuts` only for `aria-keyshortcuts` and shows no action
 shortcut labels. Outside a pending interaction the maps are empty, handlers
-never run, `density` is `"default"`, and `promptShownAbove` is null.
+never run, `density` is `"default"`, `promptShownAbove` is null, and
+`fullHeight` is false.
 
 Core callers on the same path: `@bb/shared-ui/question-form`, which is also
 the registry's `question-form` item, reads the host through this hook. In the
@@ -3165,6 +3168,9 @@ Docs: `frontend-hooks-and-ui.md`.
 5. **Inline fields.** `density` and `promptShownAbove` describe one
    placement, the Active child threads card. Decide whether a single
    `placement` value should replace them before the prefix drops.
+6. **Full height.** The Decisions plugin reads `fullHeight` to let its context
+   grow and keep its options visible. Confirm other forms need it, or whether
+   the shell can size every form without telling it.
 
 ## `app.slots.experimental_providerIcon` (`@get-bb/plugin-sdk/app`)
 
