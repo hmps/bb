@@ -126,6 +126,7 @@ function DecisionsForm({
   const formRef = useRef<HTMLDivElement>(null);
   const ownAnswerRef = useRef<HTMLInputElement>(null);
   const {
+    fullHeight,
     shortcuts,
     actionShortcuts,
     registerChoiceHandler,
@@ -244,7 +245,7 @@ function DecisionsForm({
       ref={formRef}
       tabIndex={-1}
       data-question-form
-      className="-m-1 flex min-h-0 flex-col gap-2.5 rounded-md p-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      className="-m-1 flex min-h-0 grow flex-col gap-2.5 rounded-md p-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
     >
       {count > 1 ? (
         <DecisionPager
@@ -259,6 +260,7 @@ function DecisionsForm({
         key={page}
         decision={decision}
         decisionIndex={page}
+        fullHeight={fullHeight}
         pick={pick}
         shortcuts={shortcuts}
         ownAnswerRef={ownAnswerRef}
@@ -353,6 +355,7 @@ function DecisionPager({
 function DecisionPage({
   decision,
   decisionIndex,
+  fullHeight,
   pick,
   shortcuts,
   ownAnswerRef,
@@ -361,6 +364,7 @@ function DecisionPage({
 }: {
   decision: Decision;
   decisionIndex: number;
+  fullHeight: boolean;
   pick: DecisionPick | undefined;
   shortcuts: ReadonlyMap<string, { label: string; ariaKeyshortcuts: string }>;
   ownAnswerRef: RefObject<HTMLInputElement | null>;
@@ -370,9 +374,19 @@ function DecisionPage({
   const pickedOption =
     pick !== undefined && "option" in pick ? pick.option : null;
   return (
-    <div className="flex flex-col gap-2.5">
+    <div
+      className={cn(
+        "flex flex-col gap-2.5",
+        fullHeight ? "min-h-0 grow" : undefined,
+      )}
+    >
       <h3 className="text-base text-foreground">{decision.question}</h3>
-      <div className="max-h-48 overflow-y-auto rounded-lg bg-surface-recessed px-3 py-2">
+      <div
+        className={cn(
+          "overflow-y-auto rounded-lg bg-surface-recessed px-3 py-2",
+          fullHeight ? "min-h-24 grow basis-0" : "max-h-[40dvh]",
+        )}
+      >
         <Markdown
           content={decision.context}
           className="text-sm text-foreground"
