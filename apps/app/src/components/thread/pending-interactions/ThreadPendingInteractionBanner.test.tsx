@@ -543,6 +543,7 @@ describe("ThreadPendingInteractionBanner collapsed strip", () => {
     const banner = screen.getByTestId("approval-banner");
     expect(banner.hasAttribute("data-expanded")).toBe(true);
     expect(banner.textContent).toContain("Not in allowlist: bash");
+    expect(screen.queryByRole("button", { name: "Full height" })).toBeNull();
     expect(banner.textContent).toContain(
       "python3 -m unittest discover -s tests 2>&1 | tail -20",
     );

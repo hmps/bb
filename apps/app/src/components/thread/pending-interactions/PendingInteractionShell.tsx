@@ -15,6 +15,12 @@ import { Icon } from "@bb/shared-ui/icon";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { ExpandableLine } from "@/components/ui/expandable-line.js";
 import { isNonImeKey } from "@bb/shared-ui/lib/ime-keyboard";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@bb/shared-ui/tooltip";
 
 export const InlinePendingInteractionContext = createContext<{
   promptShownAbove: string;
@@ -24,6 +30,7 @@ interface PendingInteractionShellProps {
   label: string;
   title?: string;
   expandedByDefault: boolean;
+  allowFullHeight?: boolean;
   errorMessage?: string | null;
   footer?: ReactNode;
   children?: (isExpanded: boolean) => ReactNode;
@@ -34,6 +41,7 @@ export function PendingInteractionShell({
   label,
   title,
   expandedByDefault,
+  allowFullHeight = false,
   errorMessage,
   footer,
   children,
@@ -47,15 +55,22 @@ export function PendingInteractionShell({
     setPreviousExpandedByDefault(expandedByDefault);
     if (expandedByDefault) setIsExpanded(true);
   }
+  const [isFullHeightRequested, setIsFullHeightRequested] = useState(false);
+  const isFullHeight =
+    allowFullHeight && inline === null && isExpanded && isFullHeightRequested;
   const rootRef = useRef<HTMLElement>(null);
   const availableHeight = useStickyFooterAvailableHeight(
     rootRef,
     inline !== null || isExpanded,
   );
+  const fittedHeight =
+    availableHeight === null ? null : Math.max(160, availableHeight);
   const fittedHeightStyle =
-    availableHeight === null
+    fittedHeight === null
       ? undefined
-      : { maxHeight: Math.max(160, availableHeight) };
+      : isFullHeight
+        ? { height: fittedHeight }
+        : { maxHeight: fittedHeight };
   const toggleRef = useRef<HTMLButtonElement>(null);
   const contentId = useId();
   const errorId = useId();
@@ -64,10 +79,38 @@ export function PendingInteractionShell({
       event.preventDefault();
       event.stopPropagation();
       setIsExpanded(false);
+      setIsFullHeightRequested(false);
       toggleRef.current?.focus();
     }
   };
-  const handleToggle = () => setIsExpanded((value) => !value);
+  const handleToggle = () => {
+    if (isExpanded) setIsFullHeightRequested(false);
+    setIsExpanded(!isExpanded);
+  };
+  const fullHeightLabel = isFullHeight ? "Exit full height" : "Full height";
+  const fullHeightToggle =
+    allowFullHeight && isExpanded ? (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-controls={contentId}
+              aria-pressed={isFullHeight}
+              aria-label={fullHeightLabel}
+              onClick={() => setIsFullHeightRequested((value) => !value)}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <Icon
+                name={isFullHeight ? "Minimize2" : "Maximize2"}
+                className="size-3.5"
+              />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">{fullHeightLabel}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    ) : null;
   const toggle = (
     <button
       ref={toggleRef}
@@ -117,6 +160,7 @@ export function PendingInteractionShell({
         <ThreadQuestionFormHost
           density="compact"
           promptShownAbove={inline.promptShownAbove}
+          fullHeight={false}
         >
           <div className="-m-1 max-h-[40dvh] min-h-0 touch-pan-y overflow-y-auto overscroll-contain p-1">
             {inlineTitle ? (
@@ -149,9 +193,15 @@ export function PendingInteractionShell({
       aria-label={label}
       data-testid={testId}
       data-expanded={isExpanded ? "" : undefined}
+      data-full-height={isFullHeight ? "" : undefined}
       onKeyDown={handleKeyDown}
       style={fittedHeightStyle}
-      className="@container mb-2 flex min-h-0 min-w-0 max-w-full flex-col overflow-hidden rounded-lg border border-border bg-surface-recessed text-xs text-muted-foreground"
+      className={cn(
+        "@container mb-2 flex min-h-0 min-w-0 max-w-full flex-col overflow-hidden rounded-lg border border-border bg-surface-recessed text-xs text-muted-foreground",
+        isFullHeight && fittedHeight === null
+          ? "h-[min(48rem,80dvh)]"
+          : undefined,
+      )}
     >
       <div
         className={cn(
@@ -183,14 +233,26 @@ export function PendingInteractionShell({
             </span>
           </span>
         </button>
+        {fullHeightToggle}
         {toggle}
       </div>
       <Activity mode={isExpanded ? "visible" : "hidden"}>
-        <ThreadQuestionFormHost density="default" promptShownAbove={null}>
+        <ThreadQuestionFormHost
+          density="default"
+          promptShownAbove={null}
+          fullHeight={isFullHeight}
+        >
           <div
             id={contentId}
             hidden={!isExpanded}
-            className="min-h-0 max-h-[min(32rem,50dvh)] touch-pan-y overflow-y-auto overscroll-contain px-3 pb-3 pt-2.5"
+            className={cn(
+              "min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 pb-3 pt-2.5",
+              isFullHeight
+                ? "flex flex-1 flex-col"
+                : allowFullHeight
+                  ? "max-h-[min(44rem,70dvh)]"
+                  : "max-h-[min(32rem,50dvh)]",
+            )}
           >
             {title ? (
               <h3 className="min-w-0 text-xs font-medium text-foreground">
@@ -203,7 +265,12 @@ export function PendingInteractionShell({
               </h3>
             ) : null}
             {children ? (
-              <div className={title ? "mt-2" : undefined}>
+              <div
+                className={cn(
+                  title ? "mt-2" : undefined,
+                  isFullHeight ? "flex shrink-0 grow flex-col" : undefined,
+                )}
+              >
                 {children(isExpanded)}
               </div>
             ) : null}

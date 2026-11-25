@@ -107,6 +107,7 @@ function render(
       <ThreadQuestionFormHost
         density={handlers.density ?? "default"}
         promptShownAbove={handlers.promptShownAbove ?? null}
+        fullHeight={false}
       >
         <QuestionForm
           draftKey={handlers.draftKey}

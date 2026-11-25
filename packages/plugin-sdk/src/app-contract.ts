@@ -84,9 +84,7 @@ export interface PluginSettingsSectionProps {}
  * Internal to bb's bundled connect plugin; not part of the plugin API.
  */
 export type InternalDoNotUseSetupFailureStage =
-  | "sign_in"
-  | "pairing"
-  | "turn_on";
+  "sign_in" | "pairing" | "turn_on";
 
 /**
  * Why a setup guide section's setup attempt failed: a fixed code, never a
@@ -244,10 +242,7 @@ export interface ExperimentalQuestionShortcut {
  * `cancel` presses the form's Cancel button.
  */
 export type ExperimentalQuestionFormAction =
-  | "submit"
-  | "previous"
-  | "next"
-  | "cancel";
+  "submit" | "previous" | "next" | "cancel";
 
 /**
  * What bb tells a pending interaction form about where it renders, and the
@@ -268,6 +263,14 @@ export interface ExperimentalQuestionFormHost {
    * card.
    */
   promptShownAbove: string | null;
+  /**
+   * True while the person has expanded the card to full height with the
+   * button in its header. The card then takes the space above the composer
+   * that it shares with other open cards, and the form gets a definite
+   * height: fill it, scroll long content inside, and keep the actions
+   * visible. Only plugin cards offer the button. False elsewhere.
+   */
+  fullHeight: boolean;
   /**
    * Shortcut per zero-based option index, as a string (`"0"` is the first
    * option). Missing entries have no binding.
@@ -1156,8 +1159,7 @@ export interface ExperimentalThreadTabActionContext
 
 /** Where a plugin tab belongs. Navigation panels are owned by the registering plugin. */
 export type ExperimentalTabContext =
-  | { kind: "thread" }
-  | { kind: "nav-panel"; panelId: string };
+  { kind: "thread" } | { kind: "nav-panel"; panelId: string };
 
 export interface ExperimentalTabReference {
   id: string;
@@ -1708,8 +1710,7 @@ export interface ExperimentalClipboardContent {
  * the page, plus the file name the user sees.
  */
 export type ExperimentalSaveFileRequest =
-  | { fileName: string; url: string }
-  | { fileName: string; blob: Blob };
+  { fileName: string; url: string } | { fileName: string; blob: Blob };
 
 /**
  * How {@link PluginSdkApp.experimental_saveFile} started. `started` means
@@ -3170,10 +3171,7 @@ export interface ExperimentalComposerSearchQuery<Trigger extends string> {
 
 /** How a suggested thread relates to the thread being composed in. */
 export type ExperimentalComposerThreadRelation =
-  | "parent"
-  | "child"
-  | "same-parent"
-  | "same-environment";
+  "parent" | "child" | "same-parent" | "same-environment";
 
 type MentionTargetOf<Kind extends ExperimentalComposerMentionTarget["kind"]> =
   Extract<ExperimentalComposerMentionTarget, { kind: Kind }>;
@@ -3648,12 +3646,7 @@ export type ExperimentalComposerMenuEntryProps =
 export interface ExperimentalVoiceInputButtonProps extends ComponentPropsWithRef<"button"> {
   warning: string | null;
   variant?:
-    | "default"
-    | "destructive"
-    | "outline"
-    | "secondary"
-    | "ghost"
-    | "link";
+    "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
   size?: "default" | "sm" | "lg" | "icon";
   "data-promptbox-expanded-only"?: string;
   "data-promptbox-submit-action"?: string;
@@ -4123,10 +4116,7 @@ export interface PluginTimelineRowPresentation {
 }
 
 export type PluginTimelineRowStatus =
-  | "pending"
-  | "completed"
-  | "error"
-  | "interrupted";
+  "pending" | "completed" | "error" | "interrupted";
 
 /** The projected row a `experimental_timelineRenderer` component receives. */
 export interface PluginTimelineRendererRow {
@@ -4217,8 +4207,7 @@ export interface PluginEnvironmentProviderInputsProps {
 }
 
 export type PluginEnvironmentProviderInputsChange =
-  | { status: "ready"; value: JsonValue }
-  | { status: "blocked"; reason: string };
+  { status: "ready"; value: JsonValue } | { status: "blocked"; reason: string };
 
 /**
  * Supply the control for one of this plugin's environment providers that
@@ -4249,8 +4238,7 @@ export interface PluginMachineProviderInputsProps {
 }
 
 export type PluginMachineProviderInputsChange =
-  | { status: "ready"; value: JsonValue }
-  | { status: "blocked"; reason: string };
+  { status: "ready"; value: JsonValue } | { status: "blocked"; reason: string };
 
 /**
  * Supply the inputs control for one machine provider registered server-side
@@ -4655,9 +4643,7 @@ export interface PluginSettingsState {
 
 /** State of the app's shared realtime connection to the bb server. */
 export type PluginRealtimeConnectionState =
-  | "connecting"
-  | "connected"
-  | "reconnecting";
+  "connecting" | "connected" | "reconnecting";
 
 /** Where `useComposer()` writes. */
 export type PluginComposerScope =
@@ -4889,9 +4875,7 @@ export type ComposerMention = {
  * of the calling plugin's own mentions (`{ provider, id, label }`, no `kind`).
  */
 export type ComposerInsertPart =
-  | string
-  | ComposerMention
-  | PluginComposerMention;
+  string | ComposerMention | PluginComposerMention;
 
 /** What an @-mention pill points at: a {@link ComposerMention} without its place in the text. */
 export type ExperimentalComposerMentionTarget = ComposerMention extends infer M

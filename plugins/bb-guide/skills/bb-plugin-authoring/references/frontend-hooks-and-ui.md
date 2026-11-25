@@ -44,10 +44,12 @@ Hooks:
   package name does not share the original's state. `renderSlot` returns its
   `pluginId` option, `test-plugin` by default.
 - `experimental_useQuestionFormHost()` → `{ density, promptShownAbove,
-shortcuts, actionShortcuts, registerChoiceHandler, registerActionHandler }`
-  in a `pendingInteraction` component. In a parent's Active child threads
-  card: `"compact"` and the question the card shows; elsewhere `"default"`
-  and null. Then answer shortcuts by
+fullHeight, shortcuts, actionShortcuts, registerChoiceHandler,
+registerActionHandler }` in a `pendingInteraction` component. In a parent's
+  Active child threads card: `"compact"` and the question the card shows;
+  elsewhere `"default"` and null. `fullHeight` is true while the person has
+  expanded the card to full height (the space above the composer): fill the
+  height, scroll long content inside, and keep the actions visible. Then answer shortcuts by
   option index, `submit`/`previous`/`next`/`cancel` action shortcuts (they also
   fire in text fields inside `data-question-form`), and handlers for both.
   bb's own and the registry's `question-form` use it.
