@@ -21,6 +21,7 @@ import type {
   PluginHomepageSectionRegistration,
   PluginCommandRegistration,
   ExperimentalComposerCommandRegistration,
+  PluginComposerScope,
   PluginMessageActionRegistration,
   ExperimentalMessageActionSurface,
   ExperimentalMessageMetadataRegistration,
@@ -39,6 +40,8 @@ import type {
   ExperimentalThreadInfoSectionRegistration,
   ExperimentalThreadHeaderRowRegistration,
   ExperimentalThreadHeaderTitleRegistration,
+  ExperimentalThreadRailRegistration,
+  ExperimentalThreadRailOutlineRegistration,
   ExperimentalThreadContextCardRowRegistration,
   ExperimentalThreadContextCardSectionRegistration,
   PluginThreadActionRegistration,
@@ -322,6 +325,10 @@ type CollectedCommandShortcut = z.infer<
   ReturnType<typeof createCommandShortcutSchema>
 > | null;
 
+const COMPOSER_COMMAND_SCOPES: ReadonlySet<unknown> = new Set<
+  PluginComposerScope["kind"]
+>(["thread", "queued-message", "new-thread"]);
+
 export type CollectedPluginCommandRegistration =
   | (Omit<PluginCommandRegistration, "defaultShortcut"> & {
       target: "app";
@@ -389,6 +396,8 @@ export interface CollectedPluginAppRegistrations {
   threadInfoSections: ExperimentalThreadInfoSectionRegistration[];
   threadHeaderRows: ExperimentalThreadHeaderRowRegistration[];
   threadHeaderTitles: ExperimentalThreadHeaderTitleRegistration[];
+  threadRails: ExperimentalThreadRailRegistration[];
+  threadRailOutlines: ExperimentalThreadRailOutlineRegistration[];
   threadContextCardRows: ExperimentalThreadContextCardRowRegistration[];
   threadContextCardSections: CollectedThreadContextCardSectionRegistration[];
   threadActions: PluginThreadActionRegistration<unknown>[];
@@ -535,6 +544,8 @@ export function collectPluginAppRegistrations(
     threadInfoSections: [],
     threadHeaderRows: [],
     threadHeaderTitles: [],
+    threadRails: [],
+    threadRailOutlines: [],
     threadContextCardRows: [],
     threadContextCardSections: [],
     threadActions: [],
@@ -578,6 +589,8 @@ export function collectPluginAppRegistrations(
     threadInfoSection: new Set<string>(),
     threadHeaderRow: new Set<string>(),
     threadHeaderTitle: new Set<string>(),
+    threadRail: new Set<string>(),
+    threadRailOutline: new Set<string>(),
     threadContextCardRow: new Set<string>(),
     threadContextCardSection: new Set<string>(),
     threadAction: new Set<string>(),
@@ -727,13 +740,34 @@ export function collectPluginAppRegistrations(
   function registerComposerCommand(
     registration: ExperimentalComposerCommandRegistration,
   ): void {
+    const kind = "composer.experimental_registerCommand";
+    const command = collectCommand(kind, registration, undefined);
+    const scopes = registration.scopes;
+    if (scopes !== undefined) {
+      if (!Array.isArray(scopes)) {
+        throw new Error(`${kind}: "scopes" must be an array when set`);
+      }
+      for (const scope of scopes) {
+        if (!COMPOSER_COMMAND_SCOPES.has(scope)) {
+          throw new Error(
+            `${kind}: invalid scope kind ${JSON.stringify(scope)}`,
+          );
+        }
+      }
+    }
+    if (
+      registration.isAvailable !== undefined &&
+      typeof registration.isAvailable !== "function"
+    ) {
+      throw new Error(`${kind}: "isAvailable" must be a function`);
+    }
     collected.commandPaletteActions.push({
       target: "composer",
-      ...collectCommand(
-        "composer.experimental_registerCommand",
-        registration,
-        undefined,
-      ),
+      ...command,
+      ...(scopes !== undefined ? { scopes: [...scopes] } : {}),
+      ...(registration.isAvailable !== undefined
+        ? { isAvailable: registration.isAvailable }
+        : {}),
       run: registration.run,
     });
   }
@@ -1136,6 +1170,25 @@ export function collectPluginAppRegistrations(
         collected.threadHeaderRows.push({
           id,
           ...requireOptionalOrder(kind, registration.order),
+          component: requireComponent(kind, registration.component),
+        });
+      },
+      experimental_threadRail(registration) {
+        const kind = "slots.experimental_threadRail";
+        const id = requireSlotId(kind, registration?.id);
+        requireUniqueId(kind, seenIds.threadRail, id);
+        collected.threadRails.push({
+          id,
+          ...requireOptionalOrder(kind, registration.order),
+          component: requireComponent(kind, registration.component),
+        });
+      },
+      experimental_threadRailOutline(registration) {
+        const kind = "slots.experimental_threadRailOutline";
+        const id = requireSlotId(kind, registration?.id);
+        requireUniqueId(kind, seenIds.threadRailOutline, id);
+        collected.threadRailOutlines.push({
+          id,
           component: requireComponent(kind, registration.component),
         });
       },

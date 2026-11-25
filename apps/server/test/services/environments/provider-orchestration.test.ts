@@ -6,6 +6,7 @@ import {
   resolveThreadEnvironmentPlacement,
   prepareProviderEnvironment,
 } from "../../../src/services/threads/thread-environment-placement.js";
+import { createGitCheckoutInspector } from "../../../src/services/environments/provider-availability.js";
 import { withEnvironmentCleanupSlot } from "../../../src/services/environments/cleanup-concurrency.js";
 import { reportEnvironmentHookProgress } from "../../../src/services/environments/environment-hooks.js";
 import { registerHostRpcResponder } from "../../helpers/host-rpc.js";
@@ -1148,7 +1149,10 @@ describe("core environment orchestration", () => {
           status: "created",
           path: `/tmp/${context.pathKey}`,
           ownsPath: true,
-          additionalPaths: ["/tmp/siblings/api/", "/tmp/siblings/docs"],
+          additionalPaths: [
+            { path: "/tmp/siblings/api/", replaces: "/work/api/" },
+            { path: "/tmp/siblings/docs" },
+          ],
         }),
       });
       fixture.ask();
@@ -1156,7 +1160,33 @@ describe("core environment orchestration", () => {
       fixture.attach();
       expect(fixture.row()).toMatchObject({
         status: "ready",
-        additionalPaths: ["/tmp/siblings/api", "/tmp/siblings/docs"],
+        additionalPaths: [
+          { path: "/tmp/siblings/api", replaces: "/work/api" },
+          { path: "/tmp/siblings/docs", replaces: null },
+        ],
+      });
+    }));
+
+  it("fails a create that replaces a relative project folder", async () =>
+    withTestHarness(async (harness) => {
+      const fixture = setup(harness, {
+        create: async (context) => ({
+          status: "created",
+          path: `/tmp/${context.pathKey}`,
+          ownsPath: true,
+          additionalPaths: [
+            { path: "/tmp/siblings/api", replaces: "work/api" },
+          ],
+        }),
+      });
+      fixture.ask();
+      await fixture.settled();
+      expect(fixture.ask()).toMatchObject({
+        action: "reject",
+        message: expect.stringContaining("must be an absolute path"),
+      });
+      expect(fixture.row()).toMatchObject({
+        status: "error",
       });
     }));
 
@@ -1167,7 +1197,7 @@ describe("core environment orchestration", () => {
           status: "created",
           path: `/tmp/${context.pathKey}`,
           ownsPath: true,
-          additionalPaths: [`/tmp/${context.pathKey}/nested`],
+          additionalPaths: [{ path: `/tmp/${context.pathKey}/nested` }],
         }),
       });
       fixture.ask();
@@ -2314,6 +2344,7 @@ describe("existing-path provider selection", () => {
         const placement = await resolveThreadEnvironmentPlacement(
           harness.deps,
           {
+            inspectGitCheckout: createGitCheckoutInspector(harness.deps),
             projectId: fixture.context.project.id,
             requestedEnvironment: {
               type: "provider",
@@ -2349,6 +2380,7 @@ describe("existing-path provider selection", () => {
         locate: () => ({ path: "/tmp/unrecorded", reuse: true }),
       });
       const placement = await resolveThreadEnvironmentPlacement(harness.deps, {
+        inspectGitCheckout: createGitCheckoutInspector(harness.deps),
         projectId: fixture.context.project.id,
         requestedEnvironment: {
           type: "provider",
@@ -2395,6 +2427,7 @@ describe("existing-path provider selection", () => {
           .run();
       await expect(
         resolveThreadEnvironmentPlacement(harness.deps, {
+          inspectGitCheckout: createGitCheckoutInspector(harness.deps),
           projectId: fixture.context.project.id,
           requestedEnvironment: {
             type: "provider",
@@ -2704,6 +2737,7 @@ describe("worktree adoption cleanup", () => {
         const placement = await resolveThreadEnvironmentPlacement(
           harness.deps,
           {
+            inspectGitCheckout: createGitCheckoutInspector(harness.deps),
             projectId: fixture.context.project.id,
             requestedEnvironment: {
               type: "provider",

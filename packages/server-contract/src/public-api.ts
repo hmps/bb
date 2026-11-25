@@ -125,6 +125,7 @@ import {
   type EnvironmentActionResponse,
   type EnvironmentArchiveThreadsResponse,
   type EnvironmentPathsQuery,
+  type EnvironmentReposResponse,
   type HostDirectoryListing,
   type HostDirectoryQuery,
   type HostDiscoveredReposResponse,
@@ -300,7 +301,7 @@ import {
   type UpdateQueuedMessageRequest,
   type UploadedPromptAttachment,
   type WorkspaceFileListResponse,
-  type WorkspacePathListResponse,
+  type WorkspaceSearchPathListResponse,
   closeTerminalRequestSchema,
   copyProjectAttachmentsRequestSchema,
   createFilePreviewRequestSchema,
@@ -637,7 +638,7 @@ export const publicApiRoutes = {
       request: queryRequest<PathProjectId, ProjectPathsQuery>(
         projectPathsQuerySchema,
       ),
-      response: jsonResponse<WorkspacePathListResponse>(),
+      response: jsonResponse<WorkspaceSearchPathListResponse>(),
     }),
     commands: defineRoute({
       path: "/projects/:id/commands",
@@ -1285,13 +1286,19 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<Environment>(),
     }),
+    repos: defineRoute({
+      path: "/environments/:id/repos",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentReposResponse>(),
+    }),
     paths: defineRoute({
       path: "/environments/:id/paths",
       method: "get",
       request: queryRequest<PathId, EnvironmentPathsQuery>(
         environmentPathsQuerySchema,
       ),
-      response: jsonResponse<WorkspacePathListResponse>(),
+      response: jsonResponse<WorkspaceSearchPathListResponse>(),
     }),
     file: defineRoute({
       path: "/environments/:id/files/:filePath{.+}",

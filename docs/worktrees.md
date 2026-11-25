@@ -133,10 +133,11 @@ A project can keep up to four warm worktrees per checkout: worktrees already
 created at the project's default base with `.worktreeinclude` copied and
 `.bb-env-setup.sh` finished. A new worktree thread on the default base takes
 one instead of waiting for git and the setup script, in the same order as a
-fresh worktree: bb asks the remote for its current default base
-(`git ls-remote`), hands the warm worktree to the thread, brings it up to date
-while the thread's title is generated, and names the branch from the title
-last. A warm worktree at the remote's commit starts the thread without running
+fresh worktree: in one call to the machine, bb asks the remote for its current
+default base (`git ls-remote`), checks the warm worktree and fast-forwards it
+to that commit; it then hands the warm worktree to the thread, reruns setup
+while the thread's title is generated if the worktree moved, and names the
+branch from the title last. A warm worktree at the remote's commit starts the thread without running
 setup again. A warm worktree behind it is fast-forwarded to that commit and
 `.bb-env-setup.sh` runs again before the thread starts, so a thread never
 starts on older code than a fresh worktree would. If bb restarts before the
@@ -151,7 +152,11 @@ fresh worktree, and so does a thread that finds no usable warm worktree.
 
 Turn it on per project in the Worktree plugin's settings, or with
 `bb worktree pool set <project-id> <size>` (`0` turns it off and deletes the
-idle ones); `bb worktree pool status` lists them. While a project keeps warm
+idle ones); `bb worktree pool status` lists them. Every machine with a checkout
+keeps the project's count unless you give that machine its own: pick a count
+next to the machine in settings, or run
+`bb worktree pool set <project-id> <size> --host <host-id>` (`project` as the
+size makes the machine follow the project's count again). While a project keeps warm
 worktrees, bb fetches its default base every two minutes and replaces warm
 worktrees that are no longer on it (the default branch was rewritten); a warm
 worktree that is only behind is kept and moved forward when a thread takes it.

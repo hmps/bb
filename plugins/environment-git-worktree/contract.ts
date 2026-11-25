@@ -26,6 +26,26 @@ export const ownedBranchSchema = z
   })
   .strict();
 
+const remoteBaseSchema = z
+  .object({
+    ref: z.string().min(1),
+    commit: z.string().min(1),
+    offline: z.boolean(),
+  })
+  .strict();
+
+export type RemoteBase = z.infer<typeof remoteBaseSchema>;
+
+export const createdFolderWorktreeSchema = z
+  .object({
+    sourcePath: z.string().min(1),
+    path: z.string().min(1),
+    baseBranch: z.string().min(1).nullable(),
+    ownsBranch: z.boolean(),
+  })
+  .strict();
+export type CreatedFolderWorktree = z.infer<typeof createdFolderWorktreeSchema>;
+
 export const MAX_POOL_SIZE = 4;
 
 export const worktreeHostContract = defineRpcContract({
@@ -82,6 +102,33 @@ export const worktreeHostContract = defineRpcContract({
         .strict(),
     ]),
   },
+  listFolderRepositories: {
+    input: z.object({ paths: z.array(z.string().min(1)) }).strict(),
+    output: z.object({ paths: z.array(z.string().min(1)) }).strict(),
+  },
+  createFolders: {
+    input: z
+      .object({
+        operationId: z.string().min(1),
+        sourcePath: z.string().min(1),
+        path: z.string().min(1),
+        folders: z.array(z.string().min(1)).min(1),
+        branchName: z.string().min(1).nullable(),
+        branchMode: z.enum(["reset", "reuse-existing"]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("status", [
+      z
+        .object({
+          status: z.literal("created"),
+          folders: z.array(createdFolderWorktreeSchema),
+        })
+        .strict(),
+      z
+        .object({ status: z.literal("failed"), message: z.string().min(1) })
+        .strict(),
+    ]),
+  },
   nameBranch: {
     input: z
       .object({
@@ -126,35 +173,40 @@ export const worktreeHostContract = defineRpcContract({
       z.object({ status: z.literal("no-repository") }).strict(),
     ]),
   },
-  readRemoteBase: {
-    input: z.object({ sourcePath: z.string().min(1) }).strict(),
-    output: z
-      .object({
-        ref: z.string().min(1),
-        commit: z.string().min(1),
-        offline: z.boolean(),
-      })
-      .strict()
-      .nullable(),
-  },
-  checkPoolMember: {
+  claimPoolMember: {
     input: z
       .object({
         sourcePath: z.string().min(1),
         path: z.string().min(1),
         placeholder: z.string().min(1),
-        baseBranch: z.string().min(1),
-        baseCommit: z.string().min(1),
+        base: remoteBaseSchema.nullable(),
+        checkTimeoutMs: z.number().int().positive(),
       })
       .strict(),
     output: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("no-base") }).strict(),
+      z.object({ status: z.literal("timed-out") }).strict(),
       z
-        .object({ status: z.literal("usable"), head: z.string().min(1) })
+        .object({
+          status: z.literal("base-unavailable"),
+          reason: z.string().min(1),
+        })
         .strict(),
       z
-        .object({ status: z.literal("refused"), reason: z.string().min(1) })
+        .object({
+          status: z.literal("usable"),
+          base: remoteBaseSchema,
+          head: z.string().min(1),
+        })
         .strict(),
-      z.object({ status: z.literal("busy") }).strict(),
+      z
+        .object({
+          status: z.literal("refused"),
+          base: remoteBaseSchema,
+          reason: z.string().min(1),
+        })
+        .strict(),
+      z.object({ status: z.literal("busy"), base: remoteBaseSchema }).strict(),
     ]),
   },
   nameHandedOffBranch: {
@@ -164,12 +216,6 @@ export const worktreeHostContract = defineRpcContract({
         fromBranch: z.string().min(1),
         toBranch: z.string().min(1),
       })
-      .strict(),
-    output: z.null(),
-  },
-  fastForward: {
-    input: z
-      .object({ path: z.string().min(1), commit: z.string().min(1) })
       .strict(),
     output: z.null(),
   },
@@ -199,6 +245,7 @@ export const worktreeHostContract = defineRpcContract({
         pathKey: z.string().min(1),
         path: z.string().min(1).nullable(),
         ownedBranch: ownedBranchSchema.nullable(),
+        folderBranches: z.array(ownedBranchSchema),
       })
       .strict(),
     output: z.discriminatedUnion("status", [

@@ -179,6 +179,7 @@ import { createPluginRegistration } from "./plugin-registration.js";
 import {
   createPluginRuntime,
   forgetMutableRoot,
+  PLUGIN_SAFE_MODE_DETAIL,
   type PluginLoadHold,
 } from "./plugin-runtime.js";
 import {
@@ -703,6 +704,7 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
 
   const HTTP_TOKEN_FILE = ".http-token";
   let schedulesPaused = false;
+  const runningSchedules = new Set<string>();
   let loadPassActive = false;
   const suspendedPluginIds = new Set<string>();
 
@@ -740,6 +742,7 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
     listPluginServerAccessProviders,
     getPluginMachineProvider,
     isPackagedBuiltinEntry,
+    abortLoad,
     loadAll,
     loaded,
     loadOne,
@@ -1999,6 +2002,9 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
         const rows = listInstalledPlugins(deps.db)
           .filter((row) => row.enabled && !isSafeModeExemptRow(row))
           .sort((a, b) => a.id.localeCompare(b.id));
+        if (enabled) {
+          for (const row of rows) abortLoad(row.id, PLUGIN_SAFE_MODE_DETAIL);
+        }
         const problems: string[] = [];
         for (const row of rows) {
           const problem = await withLifecycleLock(row.id, () => loadOne(row));
@@ -2955,18 +2961,20 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
           schedulesPaused
             ? []
             : listDuePluginSchedules(deps.db, {
-                excludedKeys,
+                excludedKeys: new Set([...excludedKeys, ...runningSchedules]),
                 limit: SCHEDULE_SWEEP_BATCH_SIZE,
                 now,
                 pluginIds: [...loaded.keys()],
               }),
         key: (row) => pluginScheduleKey(row),
-        process: async (row) => {
+        process: (row) => {
           const owner = loaded.get(row.pluginId);
           const schedule = owner?.handle.schedules.find(
             (record) => record.name === row.name,
           );
           if (owner === undefined || schedule === undefined) return;
+          const key = pluginScheduleKey(row);
+          if (runningSchedules.has(key)) return;
           const claimed = claimPluginScheduledRun(deps.db, {
             pluginId: row.pluginId,
             name: row.name,
@@ -2975,18 +2983,26 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
             now,
           });
           if (!claimed) return;
-          const outcome = await invokeWrapped(
-            owner,
-            `schedule ${row.name}`,
-            () => schedule.fn(),
-          );
-          recordPluginScheduleResult(deps.db, {
-            pluginId: row.pluginId,
-            name: row.name,
-            status: outcome.ok ? "ok" : "error",
-            error: outcome.ok ? null : outcome.error,
-            now: Date.now(),
-          });
+          runningSchedules.add(key);
+          void invokeWrapped(owner, `schedule ${row.name}`, () => schedule.fn())
+            .then((outcome) => {
+              recordPluginScheduleResult(deps.db, {
+                pluginId: row.pluginId,
+                name: row.name,
+                status: outcome.ok ? "ok" : "error",
+                error: outcome.ok ? null : outcome.error,
+                now: Date.now(),
+              });
+            })
+            .catch((error: unknown) => {
+              deps.logger.error(
+                { err: error, pluginId: row.pluginId, schedule: row.name },
+                "Plugin schedule result could not be recorded",
+              );
+            })
+            .finally(() => {
+              runningSchedules.delete(key);
+            });
         },
       });
     },

@@ -2,6 +2,8 @@ import {
   operationComplete,
   operationInProgress,
 } from "../services/lib/operation-response.js";
+import { searchWorkspaceFolderPaths } from "../services/projects/workspace-path-search.js";
+import { listEnvironmentExtraFolderPaths } from "../services/environments/environment-workspace-folders.js";
 import {
   projectMachineEnvironmentView,
   replaceMachineEnvironment,
@@ -32,6 +34,7 @@ import {
   updateProjectSource,
   setProjectGitRemoteUrlIfMissing,
   type ReorderProjectResult,
+  getEnvironment,
 } from "@bb/db";
 import {
   projectListIncludeOptionSchema,
@@ -107,7 +110,7 @@ import {
 import { resolveSharedSkills } from "../services/skills/shared-skills.js";
 import {
   providerHasNativeRootSurface,
-  scanProviderNativeRoots,
+  listProviderNativeCommands,
 } from "../services/providers/native-roots.js";
 import { assertUsableHostId } from "../services/hosts/primary-host.js";
 import { listProviderLiveCommands } from "../services/providers/provider-live-commands.js";
@@ -781,8 +784,6 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
     const projectId = context.req.param("id");
     requirePublicProject(deps.db, projectId);
 
-    const limit = parseFileListLimit(query.limit);
-
     const target = resolveProjectWorkspaceTarget(deps, {
       projectId,
       environmentId: query.environmentId,
@@ -792,23 +793,28 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
       includeFiles: query.includeFiles,
       includeDirectories: query.includeDirectories,
     });
-    const result = await callHostRetryableOnlineRpc(deps, {
-      hostId: target.hostId,
-      signal: context.req.raw.signal,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      command: {
-        type: "host.list_paths",
-        path: target.path,
-        ...(query.query ? { query: query.query } : {}),
-        limit,
-        includeFiles: inclusion.includeFiles,
+    const environment =
+      query.environmentId === undefined
+        ? null
+        : getEnvironment(deps.db, query.environmentId);
+    return context.json(
+      await searchWorkspaceFolderPaths(deps, {
+        folders: query.folders ?? "all",
+        extraFolders: listEnvironmentExtraFolderPaths(deps.db, {
+          additionalPaths: environment?.additionalPaths ?? [],
+          hostId: target.hostId,
+          mainPath: target.path,
+          projectId,
+        }),
+        hostId: target.hostId,
         includeDirectories: inclusion.includeDirectories,
-        includeHidden: WORKSPACE_PATH_LIST_INCLUDE_HIDDEN,
-        respectGitIgnore: true,
-        excludeNames: [...DEFAULT_PATH_LIST_EXCLUDE_NAMES],
-      },
-    });
-    return context.json({ paths: result.paths, truncated: result.truncated });
+        includeFiles: inclusion.includeFiles,
+        limit: parseFileListLimit(query.limit),
+        mainPath: target.path,
+        query: query.query,
+        signal: context.req.raw.signal,
+      }),
+    );
   });
 
   get(routes.commands, async (context, query) => {
@@ -829,8 +835,7 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
       if (!providerHasNativeRootSurface(registration)) {
         return { commands: [] };
       }
-      return scanProviderNativeRoots(deps, {
-        type: "host.list_commands",
+      return listProviderNativeCommands(deps, {
         registration,
         hostId: workspace.hostId,
         cwd: workspace.cwd,
@@ -963,16 +968,16 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
     });
     const branchQuery = normalizeBranchQuery(query.query);
     const selectedBranch = normalizeBranchQuery(query.selectedBranch);
-    const inspectionPromise = callHostRetryableOnlineRpc(deps, {
-      hostId: source.hostId,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      command: {
-        type: "host.inspect_git_source",
-        path: source.path,
-        remoteRefresh,
-      },
-    });
-    const readBranchOptions = () =>
+    const [inspection, branchOptions] = await Promise.all([
+      callHostRetryableOnlineRpc(deps, {
+        hostId: source.hostId,
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        command: {
+          type: "host.inspect_git_source",
+          path: source.path,
+          remoteRefresh,
+        },
+      }),
       callHostRetryableOnlineRpc(deps, {
         hostId: source.hostId,
         timeoutMs: COMMAND_TIMEOUT_MS,
@@ -982,16 +987,9 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
           ...(branchQuery ? { query: branchQuery } : {}),
           ...(selectedBranch ? { selectedBranch } : {}),
           limit: parseBranchListLimit(query.limit),
-          remoteRefresh: "none",
+          remoteRefresh,
         },
-      });
-    const branchOptionsPromise =
-      remoteRefresh === "background"
-        ? readBranchOptions()
-        : inspectionPromise.then(readBranchOptions);
-    const [inspection, branchOptions] = await Promise.all([
-      inspectionPromise,
-      branchOptionsPromise,
+      }),
     ]);
     return { ...inspection, ...branchOptions };
   };

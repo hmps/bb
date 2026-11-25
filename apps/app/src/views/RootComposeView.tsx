@@ -1,6 +1,6 @@
 import { AppPanelTabsPublisher } from "@/lib/app-panel-tabs";
 import { appendQuoteAndAttachmentsToDraft } from "@bb/client-core";
-import type { ComposerAttachment } from "@get-bb/plugin-sdk";
+import type { ComposerAttachment, NewThreadRequest } from "@get-bb/plugin-sdk";
 import { createCoreComposerActions } from "@/lib/plugin-composer-handle";
 
 import {
@@ -18,6 +18,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useProviderDirectory } from "@/hooks/queries/system-queries";
 import {
   findLocalPathProjectSourceForHost,
+  isAbsoluteHostPath,
   type EnvironmentStatus,
   type Host,
   type ProviderInfo,
@@ -30,7 +31,6 @@ import type {
 import {
   NewThreadComposer,
   type NewThreadComposerState,
-  type NewThreadComposerSubmission,
 } from "@/components/promptbox/NewThreadComposer";
 import {
   ProviderCliBanner,
@@ -416,7 +416,7 @@ export function RootComposeView() {
     useNavigateToThreadAfterCreatePreference();
 
   const handleSubmit = useCallback(
-    async (request: NewThreadComposerSubmission) => {
+    async (request: NewThreadRequest) => {
       const { sendAt, ...requestFields } = request;
       const thread = await createThread.mutateAsync({
         ...requestFields,
@@ -1023,6 +1023,17 @@ function RootComposeSurface({
       if (isProjectless) {
         return null;
       }
+      if (isAbsoluteHostPath(resource.path)) {
+        const hostId =
+          rootPanelEnvironmentQuery.data?.hostId ?? rootProjectHostId;
+        if (hostId === null) return null;
+        return () => {
+          openLiveFilePreview({
+            target: { kind: "host", hostId, path: resource.path },
+            location: null,
+          });
+        };
+      }
       if (rootPanelEnvironmentId === null) return null;
       return () => {
         openLiveFilePreview({
@@ -1036,6 +1047,8 @@ function RootComposeSurface({
       };
     },
     [
+      rootPanelEnvironmentQuery.data?.hostId,
+      rootProjectHostId,
       isProjectless,
       openLiveFilePreview,
       navigate,

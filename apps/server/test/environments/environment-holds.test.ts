@@ -3,11 +3,18 @@ import {
   environmentHookOperations,
   environments,
   events,
+  threads,
+  threadTurnRequests,
   getEnvironment,
   getThread,
   type EnvironmentRow,
 } from "@bb/db";
 import type { JsonValue } from "@bb/domain";
+import type {
+  PluginEnvironmentProviderCreateContext,
+  PluginEnvironmentProviderCreateResult,
+  PluginEnvironmentProviderRestoreContext,
+} from "@get-bb/plugin-sdk/environment-provider";
 import { validatePluginEnvironmentProviderDeclaration } from "@get-bb/plugin-sdk/internal/host-policy";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
@@ -15,6 +22,7 @@ import {
   advanceEnvironmentProvisioning,
   refreshProviderRetirement,
   resumeEnvironmentProvisioningForReconnectedDaemon,
+  sweepProviderEnvironment,
   sweepProviderLifecycles,
 } from "../../src/services/environments/environment-engine.js";
 import { invokePluginInline } from "../../src/services/plugins/plugin-hook-registry.js";
@@ -36,6 +44,7 @@ import {
   seedEnvironment,
   seedHostSession,
   seedProjectWithSource,
+  seedThreadRuntimeState,
 } from "../helpers/seed.js";
 import {
   installTestBuiltinPlugin,
@@ -54,17 +63,101 @@ interface CreateCall {
   pathKey: string;
 }
 
+function unreplacedFolders(...paths: string[]) {
+  return paths.map((path) => ({ path, replaces: null }));
+}
+
 function installProviders(
   args: {
     adopt?: () => EnvironmentRow | null;
     afterAdopt?: () => Promise<void> | undefined;
     stepAfterAdopt?: string;
-    setupAfterAdopt?: boolean;
+    setupAfterAdopt?: true | { folders: string[] };
+    setupFolders?: { folders: string[]; returned: boolean };
     createdPath?: () => string | undefined;
+    additionalPaths?: (operation: {
+      kind: "create" | "restore";
+      adopted: boolean;
+      previous: string[] | null;
+    }) => string[] | undefined;
   } = {},
 ) {
   const calls: CreateCall[] = [];
   const removed: Array<JsonValue | null> = [];
+  const produce = async (
+    context:
+      | PluginEnvironmentProviderCreateContext
+      | PluginEnvironmentProviderRestoreContext,
+    kind: "create" | "restore",
+  ): Promise<PluginEnvironmentProviderCreateResult> => {
+    const call: CreateCall = {
+      environment: context.environment,
+      thread: null,
+      suggestedBranchName: await context.branchName(),
+      pathKey: context.pathKey,
+    };
+    calls.push(call);
+    const held = args.adopt?.() ?? null;
+    if (held !== null) {
+      try {
+        await context.adopt(held.id, {
+          branch: call.suggestedBranchName,
+        });
+      } catch (error) {
+        return {
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    if (args.setupAfterAdopt !== undefined && held?.path != null) {
+      try {
+        await context.setup(
+          held.path,
+          args.setupAfterAdopt === true ? undefined : args.setupAfterAdopt,
+        );
+      } catch (error) {
+        return {
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    const ownPath = `/tmp/holds/${context.pathKey}`;
+    if (held === null && args.setupFolders !== undefined)
+      await context.setup(ownPath, { folders: args.setupFolders.folders });
+    await args.afterAdopt?.();
+    if (args.stepAfterAdopt !== undefined)
+      context.report.step(args.stepAfterAdopt);
+    const additionalPaths = args
+      .additionalPaths?.({
+        kind,
+        adopted: held !== null,
+        previous:
+          "previous" in context
+            ? context.previous.environment.additionalPaths.map(
+                (entry) => entry.path,
+              )
+            : null,
+      })
+      ?.map((path) => ({ path }));
+    const setupFolderPaths =
+      held === null && args.setupFolders?.returned === true
+        ? args.setupFolders.folders.map((path) => ({ path }))
+        : undefined;
+    return {
+      status: "created",
+      path:
+        args.createdPath?.() ?? held?.path ?? `/tmp/holds/${context.pathKey}`,
+      ownsPath: true,
+      mergeBaseBranch: "origin/main",
+      resource: { branch: call.suggestedBranchName },
+      ...(additionalPaths === undefined ? {} : { additionalPaths }),
+      ...(setupFolderPaths === undefined
+        ? {}
+        : { additionalPaths: setupFolderPaths }),
+    };
+  };
   const pool: PluginEnvironmentProviderRecord = {
     pluginId: POOL_PLUGIN,
     provider: validatePluginEnvironmentProviderDeclaration({
@@ -74,43 +167,8 @@ function installProviders(
       description: "Prepare a workspace.",
       icon: "Folder",
       requires: { projectCheckout: true },
-      async create(context) {
-        const call: CreateCall = {
-          environment: context.environment,
-          thread: null,
-          suggestedBranchName: await context.branchName(),
-          pathKey: context.pathKey,
-        };
-        calls.push(call);
-        const held = args.adopt?.() ?? null;
-        if (held !== null) {
-          try {
-            await context.adopt(held.id, {
-              branch: call.suggestedBranchName,
-            });
-          } catch (error) {
-            return {
-              status: "failed",
-              message: error instanceof Error ? error.message : String(error),
-            };
-          }
-        }
-        if (args.setupAfterAdopt && held?.path != null)
-          await context.setup(held.path);
-        await args.afterAdopt?.();
-        if (args.stepAfterAdopt !== undefined)
-          context.report.step(args.stepAfterAdopt);
-        return {
-          status: "created",
-          path:
-            args.createdPath?.() ??
-            held?.path ??
-            `/tmp/holds/${context.pathKey}`,
-          ownsPath: true,
-          mergeBaseBranch: "origin/main",
-          resource: { branch: call.suggestedBranchName },
-        };
-      },
+      create: (context) => produce(context, "create"),
+      restore: (context) => produce(context, "restore"),
       async remove(context) {
         removed.push(context.resource);
         return { status: "removed" };
@@ -464,6 +522,197 @@ describe("plugin holds", () => {
     });
   });
 
+  it("keeps the extra folders a held environment was created with when its provider adopts it", async () => {
+    await withTestHarness(async (harness) => {
+      let handOff: EnvironmentRow | null = null;
+      installProviders({
+        adopt: () => handOff,
+        additionalPaths: ({ adopted }) =>
+          adopted ? undefined : ["/tmp/warm-api", "/tmp/warm-docs"],
+      });
+      const { host, project } = seed(harness);
+      const pooled = await readyHeldEnvironment(
+        harness,
+        project.id,
+        `plugin:${POOL_PLUGIN}`,
+      );
+      expect(pooled.additionalPaths).toEqual(
+        unreplacedFolders("/tmp/warm-api", "/tmp/warm-docs"),
+      );
+      handOff = pooled;
+      const thread = await providerThread(harness, {
+        hostId: host.id,
+        projectId: project.id,
+      });
+      await expect
+        .poll(() => getEnvironment(harness.db, pooled.id)?.heldBy)
+        .toBeNull();
+      expect(getThread(harness.db, thread.id)?.environmentId).toBe(pooled.id);
+      const response = await harness.app.request(
+        `/api/v1/environments/${pooled.id}`,
+      );
+      expect(await response.json()).toMatchObject({
+        id: pooled.id,
+        additionalPaths: unreplacedFolders("/tmp/warm-api", "/tmp/warm-docs"),
+      });
+    });
+  });
+
+  it("takes the extra folders create returns after adopt", async () => {
+    await withTestHarness(async (harness) => {
+      let handOff: EnvironmentRow | null = null;
+      installProviders({
+        adopt: () => handOff,
+        additionalPaths: ({ adopted }) =>
+          adopted ? ["/tmp/warm-api"] : ["/tmp/warm-api", "/tmp/warm-docs"],
+      });
+      const { host, project } = seed(harness);
+      const pooled = await readyHeldEnvironment(
+        harness,
+        project.id,
+        `plugin:${POOL_PLUGIN}`,
+      );
+      handOff = pooled;
+      await providerThread(harness, { hostId: host.id, projectId: project.id });
+      await expect
+        .poll(() => getEnvironment(harness.db, pooled.id)?.heldBy)
+        .toBeNull();
+      expect(getEnvironment(harness.db, pooled.id)?.additionalPaths).toEqual(
+        unreplacedFolders("/tmp/warm-api"),
+      );
+    });
+  });
+
+  const adoptedThread = async (
+    harness: TestAppHarness,
+    handOff: { current: EnvironmentRow | null },
+  ) => {
+    const { host, project } = seed(harness);
+    const pooled = await readyHeldEnvironment(
+      harness,
+      project.id,
+      `plugin:${POOL_PLUGIN}`,
+    );
+    handOff.current = pooled;
+    const thread = await providerThread(harness, {
+      hostId: host.id,
+      projectId: project.id,
+    });
+    await waitForQueuedCommand(
+      harness,
+      (command) =>
+        command.command.type === "thread.start" &&
+        command.command.threadId === thread.id,
+      5_000,
+    );
+    handOff.current = null;
+    harness.db
+      .update(threads)
+      .set({ status: "idle" })
+      .where(eq(threads.id, thread.id))
+      .run();
+    harness.db
+      .delete(threadTurnRequests)
+      .where(eq(threadTurnRequests.threadId, thread.id))
+      .run();
+    seedThreadRuntimeState(harness.deps, {
+      environmentId: pooled.id,
+      providerThreadId: "prov-adopted",
+      threadId: thread.id,
+    });
+    for (const [method, path] of [
+      ["POST", `/api/v1/threads/${thread.id}/archive-all`],
+      ["DELETE", `/api/v1/environments/${pooled.id}`],
+    ] as const)
+      expect((await harness.app.request(path, { method })).status).toBe(200);
+    await sweepProviderEnvironment(harness.deps, pooled.id);
+    expect(getEnvironment(harness.db, pooled.id)?.status).toBe("destroyed");
+    expect(
+      (
+        await harness.app.request(`/api/v1/threads/${thread.id}/unarchive`, {
+          method: "POST",
+        })
+      ).status,
+    ).toBe(200);
+    return { pooled, project, thread };
+  };
+
+  const restoreThread = async (
+    harness: TestAppHarness,
+    args: { threadId: string; destroyedId: string },
+  ) => {
+    const response = await harness.app.request(
+      `/api/v1/threads/${args.threadId}/restore-environment`,
+      { method: "POST" },
+    );
+    expect(response.status).toBe(200);
+    await expect
+      .poll(() => getThread(harness.db, args.threadId)?.environmentId)
+      .not.toBe(args.destroyedId);
+    const restoredId = getThread(harness.db, args.threadId)!.environmentId!;
+    await expect
+      .poll(() => getEnvironment(harness.db, restoredId)?.createPending)
+      .toBe(false);
+    return getEnvironment(harness.db, restoredId)!;
+  };
+
+  it("tells a restore which extra folders the adopted environment had", async () => {
+    await withTestHarness(async (harness) => {
+      const handOff = { current: null as EnvironmentRow | null };
+      const previousPaths: Array<string[] | null> = [];
+      installProviders({
+        adopt: () => handOff.current,
+        additionalPaths: ({ kind, adopted, previous }) => {
+          if (kind === "restore") {
+            previousPaths.push(previous);
+            return previous ?? undefined;
+          }
+          return adopted ? undefined : ["/tmp/warm-api"];
+        },
+      });
+      const { pooled, thread } = await adoptedThread(harness, handOff);
+
+      const restored = await restoreThread(harness, {
+        threadId: thread.id,
+        destroyedId: pooled.id,
+      });
+
+      expect(previousPaths).toEqual([["/tmp/warm-api"]]);
+      expect(restored.additionalPaths).toEqual(
+        unreplacedFolders("/tmp/warm-api"),
+      );
+    });
+  });
+
+  it("keeps the extra folders of a held environment a restore adopts", async () => {
+    await withTestHarness(async (harness) => {
+      const handOff = { current: null as EnvironmentRow | null };
+      installProviders({
+        adopt: () => handOff.current,
+        additionalPaths: ({ adopted }) =>
+          adopted ? undefined : ["/tmp/warm-api"],
+      });
+      const { pooled, project, thread } = await adoptedThread(harness, handOff);
+      const warm = await readyHeldEnvironment(
+        harness,
+        project.id,
+        `plugin:${POOL_PLUGIN}`,
+      );
+      handOff.current = warm;
+
+      const restored = await restoreThread(harness, {
+        threadId: thread.id,
+        destroyedId: pooled.id,
+      });
+
+      expect(restored).toMatchObject({
+        id: warm.id,
+        heldBy: null,
+        additionalPaths: unreplacedFolders("/tmp/warm-api"),
+      });
+    });
+  });
+
   it("runs setup again, before the thread starts, when the provider calls setup after adopt", async () => {
     await withTestHarness(async (harness) => {
       let handOff: EnvironmentRow | null = null;
@@ -503,6 +752,189 @@ describe("plugin holds", () => {
         createPending: false,
         resource: { branch: `bb/warm-start-${thread.id}` },
       });
+    });
+  });
+
+  it("runs each folder's setup once, in order, before the environment's, and their teardowns after it in reverse", async () => {
+    await withTestHarness(async (harness) => {
+      installProviders({
+        setupFolders: { folders: ["/tmp/api", "/tmp/docs"], returned: true },
+      });
+      const { host, project, session } = seed(harness);
+      const hooks = holdEnvironmentHooks(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+      });
+      const response = await createHeld(harness, {
+        projectId: project.id,
+        provider: { id: POOL_PROVIDER },
+        heldBy: "user",
+      });
+      const { id } = (await response.json()) as { id: string };
+      for (let run = 1; run <= 3; run += 1) {
+        await expect.poll(() => hooks.runs.length).toBe(run);
+        hooks.finish();
+      }
+      const ready = await finishSetup(harness, id);
+      expect(hooks.runs.map((command) => [command.kind, command.path])).toEqual(
+        [
+          ["setup", "/tmp/api"],
+          ["setup", "/tmp/docs"],
+          ["setup", ready.path],
+        ],
+      );
+
+      expect(
+        (
+          await harness.app.request(`/api/v1/environments/${id}`, {
+            method: "DELETE",
+          })
+        ).status,
+      ).toBe(200);
+      const swept = sweepProviderEnvironment(harness.deps, id);
+      for (let run = 4; run <= 6; run += 1) {
+        await expect.poll(() => hooks.runs.length).toBe(run);
+        hooks.finish();
+      }
+      await swept;
+      expect(
+        hooks.runs.slice(3).map((command) => [command.kind, command.path]),
+      ).toEqual([
+        ["teardown", ready.path],
+        ["teardown", "/tmp/docs"],
+        ["teardown", "/tmp/api"],
+      ]);
+    });
+  });
+
+  it("runs only the environment's own setup again when the provider calls setup after adopt", async () => {
+    await withTestHarness(async (harness) => {
+      let handOff: EnvironmentRow | null = null;
+      installProviders({
+        adopt: () => handOff,
+        setupAfterAdopt: true,
+        setupFolders: { folders: ["/tmp/api"], returned: true },
+      });
+      const { host, project } = seed(harness);
+      const pooled = await readyHeldEnvironment(
+        harness,
+        project.id,
+        `plugin:${POOL_PLUGIN}`,
+      );
+      const before = setupRows(harness);
+      expect(before.map((row) => row.path).sort()).toEqual(
+        ["/tmp/api", pooled.path].sort(),
+      );
+      handOff = pooled;
+      const thread = await providerThread(harness, {
+        hostId: host.id,
+        projectId: project.id,
+      });
+      await finishSetup(harness, pooled.id, "thread");
+      await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === thread.id,
+        5_000,
+      );
+      const after = new Map(
+        setupRows(harness).map((row) => [row.path, row.startedAt]),
+      );
+      const startedBefore = new Map(
+        before.map((row) => [row.path, row.startedAt]),
+      );
+      expect(after.get("/tmp/api")).toBe(startedBefore.get("/tmp/api"));
+      expect(after.get(pooled.path!)).toBeGreaterThan(
+        startedBefore.get(pooled.path!) ?? Number.POSITIVE_INFINITY,
+      );
+      expect(getEnvironment(harness.db, pooled.id)).toMatchObject({
+        status: "ready",
+        additionalPaths: unreplacedFolders("/tmp/api"),
+      });
+    });
+  });
+
+  it("runs a folder's setup again, then the environment's, when the provider names it after adopt", async () => {
+    await withTestHarness(async (harness) => {
+      let handOff: EnvironmentRow | null = null;
+      installProviders({
+        adopt: () => handOff,
+        setupAfterAdopt: { folders: ["/tmp/docs"] },
+        setupFolders: { folders: ["/tmp/api", "/tmp/docs"], returned: true },
+      });
+      const { host, project } = seed(harness);
+      const pooled = await readyHeldEnvironment(
+        harness,
+        project.id,
+        `plugin:${POOL_PLUGIN}`,
+      );
+      const startedBefore = new Map(
+        setupRows(harness).map((row) => [row.path, row.startedAt]),
+      );
+      handOff = pooled;
+      const thread = await providerThread(harness, {
+        hostId: host.id,
+        projectId: project.id,
+      });
+      await finishSetup(harness, pooled.id, "thread");
+      await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === thread.id,
+        5_000,
+      );
+      const after = new Map(
+        setupRows(harness).map((row) => [row.path, row.startedAt]),
+      );
+      expect(after.get("/tmp/api")).toBe(startedBefore.get("/tmp/api"));
+      expect(after.get("/tmp/docs")).toBeGreaterThan(
+        startedBefore.get("/tmp/docs") ?? Number.POSITIVE_INFINITY,
+      );
+      expect(after.get(pooled.path!)).toBeGreaterThanOrEqual(
+        after.get("/tmp/docs")!,
+      );
+    });
+  });
+
+  it("refuses a setup after adopt in a folder the adopted environment did not set up", async () => {
+    await withTestHarness(async (harness) => {
+      let handOff: EnvironmentRow | null = null;
+      installProviders({
+        adopt: () => handOff,
+        setupAfterAdopt: { folders: ["/tmp/other"] },
+        setupFolders: { folders: ["/tmp/api"], returned: true },
+      });
+      const { host, project } = seed(harness);
+      const pooled = await readyHeldEnvironment(
+        harness,
+        project.id,
+        `plugin:${POOL_PLUGIN}`,
+      );
+      const before = setupRows(harness);
+      handOff = pooled;
+      await providerThread(harness, { hostId: host.id, projectId: project.id });
+      await expect
+        .poll(() => getEnvironment(harness.db, pooled.id)?.statusMessage ?? "")
+        .toContain("the adopted environment did not set it up");
+      expect(setupRows(harness)).toEqual(before);
+    });
+  });
+
+  it("fails a create that sets up a folder it does not return", async () => {
+    await withTestHarness(async (harness) => {
+      installProviders({
+        setupFolders: { folders: ["/tmp/api"], returned: false },
+      });
+      const { project } = seed(harness);
+      const response = await createHeld(harness, {
+        projectId: project.id,
+        provider: { id: POOL_PROVIDER },
+        heldBy: "user",
+      });
+      const { id } = (await response.json()) as { id: string };
+      await expect
+        .poll(() => getEnvironment(harness.db, id)?.statusMessage ?? "")
+        .toContain("set up /tmp/api but did not return it in additionalPaths");
     });
   });
 

@@ -221,7 +221,6 @@ export const hostDaemonSessionOpenResponseSchema = z
     sessionId: z.string().min(1),
     machineEnvironment: machineEnvironmentSchema,
     idleProviderSessionTimeoutMinutes: idleProviderSessionTimeoutMinutesSchema,
-    agentCpuPriority: z.boolean(),
     heartbeatIntervalMs: z.number().int().positive(),
     leaseTimeoutMs: z.number().int().positive(),
     reconnectGraceMs: z.number().int().nonnegative(),
@@ -486,6 +485,7 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     onlineRpcResponseSuccessSchemaFor("host.remove_path"),
     onlineRpcResponseSuccessSchemaFor("host.browse_directory"),
     onlineRpcResponseSuccessSchemaFor("host.paths_exist"),
+    onlineRpcResponseSuccessSchemaFor("host.find_git_repos"),
     onlineRpcResponseSuccessSchemaFor("project.inspect"),
     onlineRpcResponseSuccessSchemaFor("project.clone_default_path"),
     onlineRpcResponseSuccessSchemaFor("host.pick_folder"),
@@ -695,7 +695,6 @@ export const hostDaemonServerWsMessageSchema = z.discriminatedUnion("type", [
       type: z.literal("provider-session-policy.replace"),
       idleProviderSessionTimeoutMinutes:
         idleProviderSessionTimeoutMinutesSchema,
-      agentCpuPriority: z.boolean(),
     })
     .strict(),
   z

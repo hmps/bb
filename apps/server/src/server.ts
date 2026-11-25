@@ -497,7 +497,7 @@ export function createApp(
   app.use("*", async (context, next) => {
     const problem = requestHostProblem(context, deps);
     if (problem !== null) {
-      throw new ApiError(problem.status, "forbidden_host", problem.error);
+      throw new ApiError(problem.status, problem.code, problem.error);
     }
     return next();
   });
@@ -787,8 +787,8 @@ export function createApp(
       ),
     callPluginHost: (args) => callPluginHostRpc(deps, args),
     disposePluginHost: (args) => disposePluginHostWorkers(deps, args),
-    onSettingsChanged: (pluginId) => {
-      deps.providerNativeRoots.invalidate(pluginId);
+    onSettingsChanged: () => {
+      deps.projectSkillIndexes.clear();
       deps.providerRegistry.forgetAllInstalled();
       requestHostDerivedStateRefreshForPluginChange(deps);
     },
@@ -891,7 +891,7 @@ export function createApp(
     }
     const problem = browserRequestProblem(context, deps);
     if (problem !== null) {
-      throw new ApiError(problem.status, "forbidden_origin", problem.error);
+      throw new ApiError(problem.status, problem.code, problem.error);
     }
     return next();
   });
@@ -971,12 +971,7 @@ export function createApp(
   ): void => {
     const problem = browserRequestProblem(context, deps);
     if (problem !== null) {
-      throw new ApiError(
-        problem.status,
-        "forbidden_origin",
-        problem.error,
-        false,
-      );
+      throw new ApiError(problem.status, problem.code, problem.error, false);
     }
   };
 

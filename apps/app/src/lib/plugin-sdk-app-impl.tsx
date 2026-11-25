@@ -1,3 +1,5 @@
+import { useConversationOutline } from "@/lib/conversation-outline";
+import { useTimelineViewport } from "@/lib/timeline-viewport";
 import { applicationLinkApprovals } from "./application-url";
 import { matchesAppShortcutKey } from "@bb/domain";
 import { sliceUtf16Head } from "@bb/text-utils";
@@ -58,7 +60,7 @@ import { usePluginId } from "@/components/plugin/plugin-context";
 import { useExperimentalCommandShortcut } from "@/lib/plugin-command-shortcut";
 import { CollapsibleStackCard } from "@/components/promptbox/banner/CollapsibleStackCard";
 import { usePluginThreadExtensionState } from "@/components/plugin/usePluginThreadExtensionState";
-import { useQuestionFormHost } from "@bb/shared-ui/question-form-host";
+import { useQuestionFormHost } from "@/components/thread/user-questions/question-form-host-context";
 import { definePluginApp } from "./plugin-app-definition";
 import { useBbContext } from "./plugin-bb-context";
 import {
@@ -235,6 +237,8 @@ export const pluginSdkAppImplementation = {
   experimental_InfoListRow: PluginInfoListRow,
   experimental_useSidebarThreads: useSidebarThreads,
   experimental_useThread: useThreadState,
+  experimental_useConversationOutline: useConversationOutline,
+  experimental_useTimelineViewport: useTimelineViewport,
   experimental_useSidebarThreadActions: useSidebarThreadActions,
   experimental_useThreadActions: useThreadActionEntries,
   experimental_useArchiveEnvironmentThreads: useArchiveEnvironmentThreads,

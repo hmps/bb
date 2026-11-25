@@ -68,6 +68,7 @@ const NON_PROJECT_PROMPT_HISTORY_THREAD_CHANGES = [
 ] as const;
 
 interface CachedThreadListEntryFixture {
+  environmentId?: string;
   hasPendingInteraction: boolean;
   id: string;
 }
@@ -363,9 +364,27 @@ describe("createRealtimeCacheEffects", () => {
 
   it("isolates project workspace caches between selected hosts", () => {
     expect(
-      projectPathsQueryKey("project-1", null, "host-a", "src", 8, true, true),
+      projectPathsQueryKey(
+        "project-1",
+        null,
+        "host-a",
+        "src",
+        8,
+        true,
+        true,
+        "main",
+      ),
     ).not.toEqual(
-      projectPathsQueryKey("project-1", null, "host-b", "src", 8, true, true),
+      projectPathsQueryKey(
+        "project-1",
+        null,
+        "host-b",
+        "src",
+        8,
+        true,
+        true,
+        "main",
+      ),
     );
     expect(
       projectCommandsQueryKey("project-1", "codex", null, "host-a"),
@@ -1260,6 +1279,43 @@ describe("createRealtimeCacheEffects", () => {
     vi.advanceTimersByTime(250);
 
     expect(queryClient.getQueryState(threadSearchKey)?.isInvalidated).toBe(
+      true,
+    );
+
+    effects.dispose();
+  });
+
+  it("refreshes the sidebar threads in an environment when the environment's status changes", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const sidebarNavigationKey = sidebarNavigationQueryKey();
+    queryClient.setQueryData<CachedSidebarNavigationFixture>(
+      sidebarNavigationKey,
+      {
+        projects: [
+          {
+            threads: [
+              {
+                environmentId: "env_1",
+                hasPendingInteraction: false,
+                id: "thr_1",
+              },
+            ],
+          },
+        ],
+        personalProject: { threads: [] },
+      },
+    );
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["status-changed"],
+    });
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(sidebarNavigationKey)?.isInvalidated).toBe(
       true,
     );
 
@@ -2566,6 +2622,7 @@ describe("createRealtimeCacheEffects", () => {
       20,
       true,
       true,
+      "main",
     );
     const secondProjectPathsKey = projectPathsQueryKey(
       "project-2",
@@ -2575,6 +2632,7 @@ describe("createRealtimeCacheEffects", () => {
       20,
       true,
       true,
+      "main",
     );
     const firstProjectSourceBranchesKey = projectSourceBranchesQueryKey(
       "project-1",

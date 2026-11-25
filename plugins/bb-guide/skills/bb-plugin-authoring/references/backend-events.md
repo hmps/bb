@@ -39,9 +39,10 @@ new outcome fails your typecheck instead of leaving a run open.
 
 Nineteen events. The seven `thread.*` ones are thread lifecycle.
 `interaction.pending` fires after core commits a pending interaction row. The
-three `message.*` ones fire when a dispatch is queued behind a wait (again when
-its wait or `sendAt` is rewritten), when a queued row's waits all clear and it
-dispatches, or when the user removes a queued row before it dispatched. Every
+three `message.*` ones fire once per row: when a dispatch is queued behind a
+wait (again when its wait or `sendAt` is rewritten), when a row's waits clear
+and it dispatches (every row of a grouped dispatch), or when a row is removed
+before it dispatched (the user deletes it, or an edit discards a retry). Every
 listener sees every queued row, so a plugin that only wants its own filters on
 `entry.waitingOn?.kind === "plugin" && entry.waitingOn.pluginId === bb.pluginId`.
 `message.cancelled` is the only signal for that removal: release resources held
@@ -297,7 +298,7 @@ clears it, and omitting it keeps it; a failed create is terminal, and a retry is
 an explicit new attempt on the same environment row after cleanup. `report.step`
 and `report.log` stream durable progress while the call runs.
 
-Experimental: a `created` result (also from `restore`) may list `additionalPaths`, absolute folders of this environment outside `path` (sibling checkouts); threads there can write them, core stores them as `Environment.additionalPaths`, and omitting the field on a reused environment keeps the list. See docs/api_to_audit.md.
+Experimental: a `created` result (also from `restore`) may list `additionalPaths`, this environment's own folders outside `path` as `{ path, replaces? }` (sibling checkouts); threads there can write each absolute `path`, core stores them as `Environment.additionalPaths` (`replaces` is `null` when absent), and omitting the field on a reused environment keeps the list. `replaces` names the project folder (`bb.sdk.projects.sources.experimental_folders`) an entry stands in for, such as the repository it made a worktree of; threads in the environment no longer get that shared folder. `setup(path, { folders })` runs each folder's setup first, in order, and its teardown after `path`'s, in reverse. See docs/api_to_audit.md.
 
 Core claims a provider's directory through `locate` or `setup(path)`.
 `bb.sdk.environments.list({ hostId, path })` compares stored paths without
@@ -437,11 +438,11 @@ The wire envelope is `{ ok: true, result }` or `{ ok: false, error }`.
 Failures use stable codes: `invalid_json`, `invalid_input`, `handler_error`,
 `invalid_output`, `non_json_result`, and `unknown_method`; validation failures
 also carry normalized `{ message, path? }[]` issues. Unknown methods return
-404, invalid JSON/input returns 400, and handler/output/serialization failures
-return 500. Throw `new experimental_PluginRpcRefusal({ code, message, issues? })`
-from `@get-bb/plugin-sdk` for expected refusals:
-`forbidden` → 403, `not_found` → 404, `conflict` → 409, `invalid` → 422.
-Codes and optional `PluginRpcValidationIssue[]` issues reach callers in the error envelope.
+404, invalid JSON/input 400, handler/output/serialization failures 500. Before
+a handler runs: `plugin_not_found` 404, `plugin_not_running` 503, `invalid_caller` 403, `forbidden_origin` 403, `unsupported_media_type` 415.
+Throw `new experimental_PluginRpcRefusal({ code, message, issues? })` from
+`@get-bb/plugin-sdk` for expected refusals: `forbidden` → 403, `not_found` → 404,
+`conflict` → 409, `invalid` → 422. Codes and optional `PluginRpcValidationIssue[]` issues reach callers in the error envelope.
 Refusals do not increment handler error counts or change status detail.
 A refused mutation rejects and rolls back shared optimistic updates. `bb plugin rpc call` prints the code and message and exits non-zero.
 Results must be strict JSON values: cyclic objects, bigint,
@@ -477,9 +478,9 @@ bb.background.schedule("sync", "*/5 * * * *", async () => {
 - A **service** starts after the factory completes and must resolve when
   `signal` aborts (reload/disable/shutdown). A crash restarts it with
   capped exponential backoff.
-- A **schedule** is a 5-field cron (server-local time) backed by a durable
-  row keyed (pluginId, name) — it survives server restarts and fires once per
-  due time, but only while the plugin is loaded.
+- A **schedule** is a 5-field cron (server-local time) on a durable row. Due
+  times missed while bb was down, the plugin unloaded, or a run still going
+  get one catch-up run; runs never overlap or delay other schedules.
 - Semantics differ on throw: a service throwing `NeedsConfigurationError`
   transitions the whole plugin to `needs-configuration` and stops
   restarting until the next load; a schedule throw (any error) only lands

@@ -18,6 +18,8 @@ import type {
   RefObject,
 } from "react";
 import type {
+  EnvironmentHostLifecycle,
+  EnvironmentStatus,
   PermissionMode,
   PromptInput,
   ProviderInfo,
@@ -205,9 +207,27 @@ export interface PluginPendingInteractionView {
   expiresAt: number | null;
 }
 
+/**
+ * Props of a `pendingInteraction` component. bb renders the component in two
+ * places: in the thread's own composer, and in a parent thread's Active child
+ * threads card when the request belongs to a child thread
+ * (`experimental_useQuestionFormHost().density` is `"compact"` there). Both
+ * props behave the same in either place.
+ */
 export interface PluginPendingInteractionProps {
   interaction: PluginPendingInteractionView;
+  /**
+   * Answer the request with `value`. Resolves once bb records the answer and
+   * rejects when it cannot; bb shows the error under the form.
+   */
   submit(value: JsonValue): Promise<void>;
+  /**
+   * End the request, what Cancel on bb's own question form does. A request
+   * from a plugin backend (`bb.ui.requestInput`) is cancelled, and a request a
+   * provider made during a turn stops that thread's turn, the way Stop does.
+   * It does the same in a parent thread's Active child threads card; the card
+   * has its own Back control and Escape for leaving without answering.
+   */
   cancel(): Promise<void>;
 }
 
@@ -230,11 +250,24 @@ export type ExperimentalQuestionFormAction =
   | "cancel";
 
 /**
- * The keyboard shortcuts bb binds while a pending interaction is open. The
- * host owns the bindings (users can remap them); a form shows them and decides
- * what choosing an option or an action means.
+ * What bb tells a pending interaction form about where it renders, and the
+ * keyboard shortcuts bb binds while it is open. bb's own question forms read
+ * the same host. The host owns the bindings (users can remap them); a form
+ * shows them and decides what choosing an option or an action means.
  */
 export interface ExperimentalQuestionFormHost {
+  /**
+   * `"compact"` in a parent thread's Active child threads card, where bb's
+   * own form uses tighter spacing and regular-weight buttons; `"default"`
+   * elsewhere.
+   */
+  density: "default" | "compact";
+  /**
+   * The question text the Active child threads card already shows above the
+   * form, so a single-question form can skip repeating it. Null outside that
+   * card.
+   */
+  promptShownAbove: string | null;
   /**
    * Shortcut per zero-based option index, as a string (`"0"` is the first
    * option). Missing entries have no binding.
@@ -1111,15 +1144,15 @@ export interface PluginNavPanelRegistration {
 }
 
 /**
- * Context handed to a thread action tab's `run`.
+ * Context handed to a thread action tab's `run`: the thread's tab props
+ * (`threadId` and `environment`, as the tab's component gets them) plus the
+ * shared action context.
  *
  * The action is thread-only and is never offered on the root New thread
  * screen, so `threadId` is always present.
  */
-export interface ExperimentalThreadTabActionContext extends ExperimentalPluginActionContext {
-  /** The thread whose panel launcher invoked the action. */
-  threadId: string;
-}
+export interface ExperimentalThreadTabActionContext
+  extends ExperimentalPluginActionContext, ExperimentalThreadTabProps {}
 
 /** Where a plugin tab belongs. Navigation panels are owned by the registering plugin. */
 export type ExperimentalTabContext =
@@ -2210,6 +2243,115 @@ export interface ExperimentalThreadHeaderRowRegistration {
 }
 
 /**
+ * Props passed to an `experimental_threadRail` component: a header row's
+ * props plus whether the rail is showing.
+ */
+export interface ExperimentalThreadRailProps extends ExperimentalThreadHeaderRowProps {
+  /**
+   * False while the pane is too narrow for a rail beside the conversation.
+   * bb keeps the item mounted, hidden and inert then, so pause reads that only
+   * feed what the rail draws.
+   */
+  visible: boolean;
+}
+
+/**
+ * A narrow column at the right edge of a thread pane's conversation, beside
+ * the messages, such as a minimap. It shows in panes that show the full
+ * conversation, not in side-panel or embedded transcripts. The thread outline
+ * (see {@link ExperimentalThreadRailOutlineRegistration}) sits at the top, then
+ * items stack top to bottom in order. Return null to take no space for this
+ * thread. A crash removes only this item for that thread.
+ */
+export interface ExperimentalThreadRailRegistration {
+  /** Unique within the plugin; letters, digits, `-`, `_`. */
+  id: string;
+  /** Ascending; unset sorts last; ties keep registration order. */
+  order?: number;
+  component: ComponentType<ExperimentalThreadRailProps>;
+}
+
+/**
+ * Props passed to an `experimental_threadRailOutline` component, the same
+ * props a rail item receives.
+ */
+export type ExperimentalThreadRailOutlineProps = ExperimentalThreadRailProps;
+
+/**
+ * Replaces bb's thread outline at the top of the rail beside every thread
+ * pane's conversation, such as a timeline of prompts with previews. bb keeps
+ * the rest of the rail. Read the thread's messages with
+ * `experimental_useConversationOutline`, what the pane shows with
+ * `experimental_useTimelineViewport`, and reveal a message with
+ * `navigate.toThread(threadId, { messageSeq })`. bb's own outline is
+ * registered through this slot too. Exclusive (see "Exclusive slots" in the
+ * Plugin Guide); the user's pick is `threadRail.outlineProvider`, which can
+ * also choose bb's outline (`__builtin__`). A crash shows bb's outline for
+ * that thread.
+ */
+export interface ExperimentalThreadRailOutlineRegistration {
+  /** Unique within the plugin; letters, digits, `-`, `_`. */
+  id: string;
+  component: ComponentType<ExperimentalThreadRailOutlineProps>;
+}
+
+/**
+ * One message in {@link ExperimentalConversationOutline}: a user prompt or an
+ * assistant reply, without its full text.
+ */
+export interface ExperimentalConversationOutlineItem {
+  /**
+   * The message's id, the same value as `ThreadChatMessageReference.id` and
+   * `ExperimentalMessageMetadataContext.id`, and in
+   * {@link ExperimentalTimelineViewport.visibleMessageIds}.
+   */
+  id: string;
+  /**
+   * The message's link sequence; pass it to `navigate.toThread` or
+   * `navigate.experimental_threadHref`. A reply that is still streaming
+   * reports the sequence of its latest update until it completes, so read it
+   * again rather than keeping it.
+   */
+  messageSeq: number;
+  role: "user" | "assistant";
+  /**
+   * The start of the message's text with whitespace collapsed, at most 200
+   * characters, without the `[bb message from thread:…]` prefix of a message
+   * another thread sent. Empty for a message with only attachments.
+   */
+  preview: string;
+  /** The thread that sent this user message, or null. */
+  senderThreadId: string | null;
+  /** Null when the message has no attachments. */
+  attachmentSummary: { imageCount: number; fileCount: number } | null;
+}
+
+/**
+ * What {@link PluginSdkApp.experimental_useConversationOutline} reports.
+ * `status` is the read of the whole thread's messages; `items` already holds
+ * the messages bb has loaded in an open pane while it is `loading`.
+ */
+export interface ExperimentalConversationOutline {
+  status: "loading" | "ready" | "error";
+  /** Oldest first. */
+  items: readonly ExperimentalConversationOutlineItem[];
+}
+
+/**
+ * Which messages a thread pane shows (see
+ * {@link PluginSdkApp.experimental_useTimelineViewport}).
+ */
+export interface ExperimentalTimelineViewport {
+  /**
+   * Ids of the conversation messages with any part in view, top to bottom:
+   * {@link ExperimentalConversationOutlineItem.id} values.
+   */
+  visibleMessageIds: readonly string[];
+  /** The conversation is scrolled to its latest message. */
+  atLatest: boolean;
+}
+
+/**
  * Props passed to an `experimental_threadHeaderTitle` component, the same
  * props a header row receives.
  */
@@ -2414,7 +2556,10 @@ export interface ExperimentalPluginBrowserToolbarActionRegistration {
 
 /**
  * The thread a thread action is evaluated for: the fields bb's own actions
- * read, copied from the thread payload by the surface that shows the menu.
+ * read. bb builds it from the thread's id the same way on every surface (the
+ * thread header, sidebar rows and their menus, selection menus, the command
+ * palette, and plugin lists), so an action sees the same target wherever it
+ * shows.
  */
 export interface PluginThreadActionTarget {
   id: string;
@@ -2433,10 +2578,19 @@ export interface PluginThreadActionTarget {
   isHidden: boolean;
   status: ThreadStatus;
   /**
-   * The thread's environment when a new thread can reuse it, null otherwise.
-   * `path` is the checkout path, null when the environment has none.
+   * The thread's environment, null when the thread has none or bb cannot
+   * read it. `path` is its checkout path, null while the environment has no
+   * checkout (not created yet, or removed). `status` is its setup state
+   * ("error" when setup failed) and `hostLifecycle` its machine's ("active"
+   * unless the machine is being removed or is gone). Experimental: see
+   * docs/api_to_audit.md.
    */
-  environment: { id: string; path: string | null } | null;
+  environment: {
+    id: string;
+    path: string | null;
+    status: EnvironmentStatus;
+    hostLifecycle: EnvironmentHostLifecycle;
+  } | null;
 }
 
 /** One row of a thread action's choice list. */
@@ -2508,6 +2662,13 @@ export interface PluginThreadActionDataInput {
    * ids, fetching only ids not loaded yet.
    */
   threadIds: readonly string[];
+  /**
+   * The targets `item` receives for `threadIds`, in the same order, kept
+   * current as the threads change. A thread bb has not loaded yet is left out
+   * until it loads. Read thread fields such as `environment` here instead of
+   * fetching each thread. Experimental: see docs/api_to_audit.md.
+   */
+  experimental_threads: readonly PluginThreadActionTarget[];
 }
 
 /** What a registration's `item` receives for each thread it is shown for. */
@@ -2672,7 +2833,12 @@ export interface PluginThreadActionsInlineItem {
 export type PluginThreadActionsTriggerProps = ComponentPropsWithRef<"button">;
 
 interface PluginThreadActionsMenuBaseProps {
-  thread: PluginThreadActionTarget;
+  /**
+   * The thread the menu acts on. bb reads only its `id` and resolves the
+   * target its actions receive itself, so pass the thread object you hold
+   * (a `PluginSidebarThread`, an `ExperimentalThread`) or `{ id }`.
+   */
+  thread: { id: string };
   inline?: readonly PluginThreadActionsInlineItem[];
   /** See {@link PluginThreadActionsOptions.requestRename}. */
   requestRename?(threadId: string): void;
@@ -2709,10 +2875,10 @@ export interface PluginThreadActionsContextMenuProps extends PluginThreadActions
    * registration's `experimental_bulkItem` under a count of the
    * selection, including bb's own Mark read, Pin, Archive and Delete, which
    * confirm and clean up as the single-thread actions do, then `inline`.
-   * Omit it, or pass fewer than two, for `thread`'s own menu. Experimental:
-   * see docs/api_to_audit.md.
+   * Omit it, or pass fewer than two, for `thread`'s own menu. As with
+   * `thread`, bb reads only each `id`. Experimental: see docs/api_to_audit.md.
    */
-  experimental_bulkThreads?: readonly PluginThreadActionTarget[];
+  experimental_bulkThreads?: readonly { id: string }[];
   /** Called when Escape dismisses the desktop menu, e.g. to clear a selection. */
   onEscapeKeyDown?(event: KeyboardEvent): void;
 }
@@ -2982,6 +3148,7 @@ export interface ExperimentalComposerSubmission {
   label?: string;
   icon?: BbIconName;
   title?: string;
+  /** The thread's agent is running or stopping; `useComposer().isRunning` reads this. */
   isRunning?: boolean;
   onStop?: () => void;
   /** What Enter (and the send button) does. */
@@ -3274,15 +3441,15 @@ export interface ExperimentalComposerDecorationSource {
   effects: readonly NonNullable<ComposerRichTextSpec["effects"]>[number][];
 }
 
-/** Editor state a composer box reports so other plugins' `useComposer()` sees it. */
+/**
+ * Editor state only the composer box knows, reported so other plugins'
+ * `useComposer()` sees it. Run, submit and upload state are bb's own: bb
+ * fills `useComposer().isRunning`, `isSubmitting`, `isSubmittingBlocked` and
+ * `submittingBlockedReason` from what it passes the box in `submission`,
+ * `attachments` and `voice`.
+ */
 export interface ExperimentalComposerEditorState {
   layout: "expanded" | "compact";
-  isRunning: boolean;
-  isSubmitting: boolean;
-  isSubmittingBlocked: boolean;
-  submittingBlockedReason: string | null;
-  isAttaching: boolean;
-  attachmentError: string | null;
 }
 
 /**
@@ -3886,6 +4053,21 @@ export interface ExperimentalComposerCommandRegistration {
   /** The palette row's and keyboard settings' label. */
   title: string;
   /**
+   * Composer kinds that run the command, as `ComposerCustomization.scopes`
+   * does for a customization; omit for all kinds. The sent-message editor
+   * reports `"thread"`. In other composers the shortcut is left to bb and the
+   * palette does not list the command for them.
+   */
+  scopes?: readonly PluginComposerScope["kind"][];
+  /**
+   * Whether the handling composer can run the command now, e.g. false on an
+   * empty draft. Called with the context `run` would get, before palette
+   * listing and keyboard invocation; keep it cheap and synchronous. While it
+   * returns false or throws, the shortcut is left to bb and the palette hides
+   * the row. Omitted means always available in `scopes`.
+   */
+  isAvailable?(context: ExperimentalComposerActionContext): boolean;
+  /**
    * Runs with the handling composer, bound to this plugin like `useComposer()`.
    * Errors (sync or async) are contained and logged.
    */
@@ -4181,6 +4363,22 @@ export interface PluginAppSlots {
    */
   experimental_threadHeaderTitle(
     registration: ExperimentalThreadHeaderTitleRegistration,
+  ): void;
+  /**
+   * Add an item to the rail beside the conversation of every thread pane that
+   * shows one (see {@link ExperimentalThreadRailRegistration}). Experimental:
+   * see docs/api_to_audit.md.
+   */
+  experimental_threadRail(
+    registration: ExperimentalThreadRailRegistration,
+  ): void;
+  /**
+   * Replace bb's thread outline at the top of the rail (see
+   * {@link ExperimentalThreadRailOutlineRegistration}). Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_threadRailOutline(
+    registration: ExperimentalThreadRailOutlineRegistration,
   ): void;
   /**
    * Add a row to the thread context card, in panes that show one (see
@@ -5287,6 +5485,15 @@ export interface NewThreadRequest {
    * created `pending` and its first message is queued as a row until then.
    */
   sendAt?: number;
+  /**
+   * The `experimental_data` a plugin passed to `useComposer().submit` from
+   * this composer, such as a send-menu row's (Drafts' "Save draft"), stamped
+   * with that plugin's id. Present only for such a submission. Forward it to
+   * `threads.spawn` unchanged: the server hands it to dispatch hooks on the
+   * first attempt as `experimental_submission`, which is how the row's plugin
+   * acts on the send. Dropping it sends the message as an ordinary one.
+   */
+  pluginSubmission?: { pluginId: string; data: JsonValue };
 }
 
 /**
@@ -5681,7 +5888,10 @@ export interface BbNavigate {
    * `messageSeq` opens the thread at that message, as a message
    * link does: bb loads older history as needed, scrolls to the message and
    * highlights it, or shows a "Message not found" toast. Repeating the call
-   * reveals the message again.
+   * reveals the message again. When the route, or the thread pane the
+   * caller renders in, already shows the thread, bb reveals the message in
+   * place and replaces the current history entry instead of adding one, so
+   * Back leaves the thread rather than stepping through reveals.
    */
   toThread(
     threadId: string,
@@ -5707,7 +5917,10 @@ export interface BbNavigate {
    * `useComposer().insert()` (throws for an invalid provider or item id), and
    * `focusPrompt` to focus the composer on arrival — the pairing behind
    * "Create via chat" style entry points that drop the user into chat with a
-   * prefilled prompt. `projectId` makes that project the composer's
+   * prefilled prompt. A draft that already has text keeps it and drops
+   * `initialPrompt`; `experimental_replacePrompt: true` replaces that draft
+   * with `initialPrompt` instead, as bb's own Create skill and Edit via chat
+   * buttons do. It does nothing without `initialPrompt`. `projectId` makes that project the composer's
    * selection; `placement` files the new thread in a section and pin state.
    * Without `placement`, the screen keeps the placement it already shows,
    * unless `environmentId` or `hostId` is set, which resets it to unpinned
@@ -5723,6 +5936,7 @@ export interface BbNavigate {
   toCompose(options?: {
     projectId?: string;
     initialPrompt?: string | readonly ComposerInsertPart[];
+    experimental_replacePrompt?: boolean;
     focusPrompt?: boolean;
     placement?: { sectionId: string | null; pinned: boolean };
     environmentId?: string;
@@ -6186,10 +6400,12 @@ export interface PluginSdkApp {
    * then plugins' in registration order. Registrations' `useData` hooks run
    * once for the app, so calling this per sidebar row costs one store
    * subscription and a pure `item` call per registration. Pass `keys` for a
-   * row's quick actions. Experimental: see docs/api_to_audit.md.
+   * row's quick actions. bb reads only `thread.id` and resolves the target
+   * as its menus do; the list is empty until bb has loaded the thread.
+   * Experimental: see docs/api_to_audit.md.
    */
   experimental_useThreadActions(
-    thread: PluginThreadActionTarget,
+    thread: { id: string },
     options?: PluginThreadActionsOptions,
   ): readonly PluginThreadActionEntry[];
   /**
@@ -6272,6 +6488,32 @@ export interface PluginSdkApp {
    * request. Experimental: see docs/api_to_audit.md.
    */
   experimental_useThread(threadId: string): ExperimentalThreadState;
+  /**
+   * A thread's user prompts or assistant replies, oldest first (see
+   * {@link ExperimentalConversationOutline}). It covers the whole thread,
+   * including messages bb has not loaded or drawn. While the thread is open
+   * in a pane, messages appear as they are sent and stream, before the
+   * whole-thread read catches up. After a context clear it holds only messages
+   * after the clear until that read reloads. `items` keeps its identity until
+   * one of them changes: a user list changes when a prompt is added, while an
+   * assistant list changes with each update of a streaming reply. With
+   * `enabled: false` bb makes no request and `status` stays `loading`; `items`
+   * still holds the messages loaded in an open pane. Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_useConversationOutline(
+    threadId: string,
+    role: "user" | "assistant",
+    options?: { enabled?: boolean },
+  ): ExperimentalConversationOutline;
+  /**
+   * Which messages the thread pane this component renders in or beside shows
+   * (see {@link ExperimentalTimelineViewport}), or null outside a thread pane
+   * that shows the full conversation. It updates once scrolling or resizing
+   * settles, and re-renders only when the answer changes. Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_useTimelineViewport(): ExperimentalTimelineViewport | null;
   /**
    * Per-row drag-to-split support (see {@link PluginSidebarThreadSplit}).
    * Call it once per rendered row, like the built-in sidebar does.

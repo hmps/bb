@@ -56,10 +56,15 @@ copy of the SDK, so a plugin's bundled copy recognizes errors the host's
 `bb.sdk` throws. Core callers: `@bb/sdk`'s own job waits and status reads use
 the same class and check; bundled plugins (tasks, git, github-pr-status,
 secrets, connect, storage-retention, provider usage sources and others)
-narrow with it instead of duck-typing `status`. Docs: Plugin Guide, The bb SDK
-(`plugins/plugin-api-docs/src/surfaces.ts`). Stabilize after checking
-`code`/`body` across every route family (some plugin routes still return bare
-string errors) and whether plugins need a narrower helper than the class.
+narrow with it instead of duck-typing `status`. The plugin RPC route
+(`POST /api/v1/plugins/<id>/rpc/<method>`) returns `{ code, message }` for
+every failure, including `plugin_not_found` (404), `plugin_not_running` (503),
+`invalid_caller` (403) and `unsupported_media_type` (415), so bb-account's
+client and connect's sign-in UI read `code` instead of the status. Docs: Plugin
+Guide, The bb SDK (`plugins/plugin-api-docs/src/surfaces.ts`). Stabilize after
+checking `code`/`body` across every route family (the plugin `http` and
+WebSocket routes still return bare string errors) and whether plugins need a
+narrower helper than the class.
 
 ## UTF-16-safe cuts (`@get-bb/plugin-sdk`, `@get-bb/plugin-sdk/app`, `@get-bb/plugin-sdk/host`)
 
@@ -268,7 +273,14 @@ that composer), send rows, banners and actions on every surface, filtered by
 but mounts no send rows, banners, actions or rich text.
 `experimental_ComposerRoot` publishes stable functions that call the latest
 editor and republishes only when the editor's state changes, so a composer
-can build its editor inline on every render.
+can build its editor inline on every render. The box reports only what it
+alone knows (`editor.state.layout`). bb owns run, submit and upload state:
+`useComposer().isRunning`, `isSubmitting`, `isSubmittingBlocked`,
+`submittingBlockedReason` and `submit()`'s upload wait come from what bb
+passes the box in `submission`, `attachments` and `voice`
+(`apps/app/src/components/promptbox/composer-host-state.ts`), so a box that
+mis-reports them cannot mislead other plugins. Already-built composers that
+still report the removed fields keep working; bb ignores them.
 
 Styling the composer needs lives in the plugin (`plugins/composer/src/composer.css`).
 bb keeps the pill surface its timeline shares and the highlight classes of
@@ -290,17 +302,29 @@ Before stabilization:
 
 ## Composer commands
 
-`PluginAppComposer.experimental_registerCommand({ id, title, defaultShortcut?, run })`
+`PluginAppComposer.experimental_registerCommand({ id, title, defaultShortcut?, scopes?, isAvailable?, run })`
 registers a palette and keyboard command that runs against the owning
 composer's `PluginComposerApi`, rebindable under
 `plugin:<plugin-id>/<command-id>` and sharing the `app.commands` id namespace.
 
+`scopes` takes the composer kinds of `ComposerCustomization.scopes`
+(`"thread"`, `"queued-message"`, `"new-thread"`; the sent-message editor
+reports `"thread"`), and `isAvailable(context)` gets the context `run` would
+get. Both feed the availability predicate of `useComposerCommand`
+(`apps/app/src/components/promptbox/composer-commands.tsx`), the hook bb's own
+`composer.focus` command registers through: out of scope, unavailable or
+throwing (logged), the composer does not claim the key, so the shortcut falls
+through to bb, and the palette leaves the row out for that composer. Callers
+these replace: kalindudc/bb-marketplace's tavern returns early from `run` when
+`composer.scope.kind !== "thread"`, and jonnik-bb-plugins/bb-plugin-bang-shell
+returns early on `composer.isEmpty || composer.isSubmittingBlocked`; both
+still swallow the key and keep the palette row today. Prompt Library's
+`search-prompts` command needs neither.
+
 Docs: `frontend-hooks-and-ui.md`.
 
 Before stabilization, verify split panes, side chat, inline queued-message
-editing, palette invocation from each, plugin reload, and rebinding. Audit
-whether composer scopes should filter commands the way they filter other
-composer contributions, and whether commands need an availability callback.
+editing, palette invocation from each, plugin reload, and rebinding.
 
 ## `settingsSection.experimental_page`
 
@@ -409,7 +433,9 @@ verbs: a new core flow joins the handle it belongs to, such as
 `threadRequests`, instead of the top level. Every plugin callback context extends it:
 `PluginCommandContext`, `PluginMessageActionContext`,
 `PluginThreadActionItemInput`/`PluginThreadActionBulkItemInput`,
-`ExperimentalThreadTabActionContext` and nav-panel action tabs' `run`,
+`ExperimentalThreadTabActionContext` (which also carries the tab's
+`ExperimentalThreadTabProps`, `threadId` and `environment`) and nav-panel
+action tabs' `run`,
 `PluginNewThreadPanelActionContext`, `PluginSidebarFooterActionContext`,
 `ExperimentalSidebarFooterActionContext`, and
 `ExperimentalComposerActionContext` (composer commands, `plusMenu` and
@@ -1138,6 +1164,26 @@ providers receive, so they carry no nested `experimental_` prefix.
   bound. Stopping the only thread of an environment whose create has not
   returned aborts the create and removes the environment, and the thread
   goes back to its provider request. Caller: Worktree's cold create.
+- `setup(path, { folders })` (experimental option) also names extra folders
+  the create made, such as new sibling worktrees. Core canonicalizes them,
+  refuses relative ones, `path` itself, ones inside or containing `path`,
+  and repeats, and stores them on `environments.setup_folder_paths` with the
+  request; repeating a request with other folders is refused. The attach
+  operation runs each folder's `.bb-env-setup.sh`, in order, before
+  `path`'s, each as its own hook operation
+  (`environment:<id>:<key>:setup:folder:<index>`), skipping a folder whose
+  setup already succeeded there. After `adopt`, `folders` may name only
+  folders the adopted environment recorded; core forgets their finished
+  setup records (`forgetFinishedEnvironmentHookOperations`), so the attach
+  operation runs those folders again, in recorded order, then `path`, and
+  leaves the others alone. Caller: Worktree's handoff, which names the
+  folder worktrees it fast-forwarded. Removal runs `path`'s `.bb-env-teardown.sh`, then
+  each folder's in reverse order. The create fails when a set-up folder is
+  missing from the result's `additionalPaths`. Recovery inspects processes
+  in each folder and acknowledges each folder's interrupted hooks. Callers:
+  Worktree's cold create and restore, which list the folder worktrees they
+  made. Before stabilizing, decide whether `additionalPaths` entries should
+  carry the setup request instead of a separate list.
 - `locate({ host, projectCheckout, inputs })` answers `{ path, reuse }` or
   null before create, replacing `experimental_existingPath`. Core checks
   path admission and claims the path on the reservation; `reuse: true` joins
@@ -1165,27 +1211,36 @@ the Worktree keeps it in its private resource and core has no reader.
 ## Environment folders (`PluginEnvironmentProviderCreateResult.additionalPaths`, `Environment.additionalPaths`)
 
 A `created` result from `create` or `restore` may carry `additionalPaths`:
-absolute host paths of the environment's own extra folders, such as sibling
-checkouts the provider made next to `path`. Core canonicalizes them and fails
-the create when one is relative, equals `path`, is inside `path`, contains
-`path`, or repeats another entry (at most 64). They are stored on
+the environment's own extra folders, each `{ path, replaces? }`. `path` is an
+absolute host path, such as a sibling checkout the provider made next to the
+main `path`. `replaces` names the project folder (`bb project folder`) that
+entry stands in for, such as the repository the provider made a worktree of.
+Core canonicalizes both and fails the create when a `path` is relative,
+equals the main `path`, is inside it, contains it, or repeats another entry,
+or when a `replaces` is relative (at most 64 entries). They are stored on
 `environments.additional_paths` and returned as `Environment.additionalPaths`
-(`[]` when the provider sends none). Omitting the field on a reused
-environment keeps the recorded list. At every session start, turn and steer
-the server merges them after the project's folders for the thread's machine
-(`bb project folder`), drops duplicates and the main folder, and sends the
-list to the daemon, which grants the agent write access for that turn; the
-agent's instructions list the folders as of its session start. The field is a member of a result type, so it carries no
-nested `experimental_` prefix.
+with `replaces` filled as `null` when absent (`[]` when the provider sends
+none). Omitting the field on a reused environment keeps the recorded list.
+At every session start, turn and steer `mergeWorkspaceFolderPaths` in
+`workspace-folder-paths.ts` takes the project's folders for the thread's
+machine, drops every one an entry replaces, adds each entry's `path`, drops
+duplicates and the main folder, and the server sends the list to the daemon,
+which grants the agent write access for that turn; the agent's instructions
+list the folders as of its session start. A replaced folder stays out even
+when its replacement is missing on disk, so the thread never silently writes
+to the shared checkout it was branched away from; the missing replacement is
+reported like any missing folder. The field is a member of a result type,
+so it carries no nested `experimental_` prefix.
 
-Core path: `environment-engine.ts` records the field for every provider,
-including the built-in Worktree and Project checkout, which return none
-today; `thread-runtime-config.ts` is the only reader.
+Core path: `environment-engine.ts` records the field for every provider;
+`thread-runtime-config.ts` is the only reader. The built-in Worktree is the
+first caller that sets `replaces`: with `folders` in its inputs it returns a
+worktree of each chosen project folder that replaces that folder. Project
+checkout returns none.
 
 Before stabilizing, decide whether a provider needs to change the list after
-create (today only a restore replaces it), whether removal should be told
-about the folders, and whether the Worktree should report worktrees it makes
-of a project's folders.
+create (today only a restore replaces it) and whether removal should be told
+about the folders.
 
 ## `app.slots.experimental_environmentProviderInputs`, `experimental_BranchPicker`, `experimental_useBranches` and `experimental_useCheckoutState` (`@get-bb/plugin-sdk/app`)
 
@@ -1395,15 +1450,19 @@ two declarations or become one list of typed roots; confirm that a flat
 ## `PluginProviderDeclaration.experimental_resolvesNativeRoots`
 
 Declares that the plugin's `bb.host` entry serves
-`resolveNativeRoots({ providerId, cwd })`. bb scans the answer beside the
-declared roots (cached ten seconds). A failed answer yields no resolved roots
-and never fails the listing.
+`resolveNativeRoots({ providerId, cwd })`. The workspace host's daemon calls
+it inside the same `host.list_commands` / `host.list_skills` request as the
+scan, so a listing is one host round trip, and scans the answer beside the
+declared roots. Nothing caches the answer; each listing asks again. A failed,
+malformed, or timed-out answer (10 s cap) yields no resolved roots and never
+fails the listing.
 
 Docs: `providers.md`, [provider-plugin-api.md](provider-plugin-api.md) §1.
 
 **Audit before stabilizing.** Decide whether the flag should exist at all or
-whether the server should detect the method on the host entry; and settle
-the cache TTL and the invalidation set against a real multi-host setup.
+whether the server should detect the method on the host entry; and confirm
+that an uncached resolver call per listing stays cheap for third-party
+resolvers.
 
 ## `experimental_nativeRootsHostContract` (`@get-bb/plugin-sdk/host`)
 
@@ -1509,8 +1568,8 @@ Docs: `backend-sdk.md`.
 `experimental_useExperiment(key)` returns whether the bb experiment `key` is
 on, from the same live system config core reads (Settings → Experiments,
 `bb settings experiment`). It is false while config loads and for unknown
-keys. Caller: push notifications, which reads
-`skipFocusedThreadNotifications`.
+keys. No core caller reads it now that push notifications' focused-thread
+skip graduated; decide whether to keep it before stabilizing.
 
 **Audit before stabilizing.**
 
@@ -2164,7 +2223,12 @@ Docs: `frontend-hooks-and-ui.md`.
 `toThread(threadId, { messageSeq })` opens the thread's message link,
 `…/threads/<id>#msg=<seq>`, through the same placement as `split`, so bb
 loads older history, scrolls to and highlights the message, or toasts
-"Message not found"; a repeated call reveals it again. That option is stable
+"Message not found"; a repeated call reveals it again. When the route
+already shows the thread (the focused pane's thread), or the caller renders
+in a thread pane that shows it (an unfocused split pane's rail), the call
+replaces the current history entry instead of pushing one, so a run of
+reveals leaves one entry and Back leaves the thread (SDK 0.6.196; earlier
+SDKs pushed an entry per call). That option is stable
 and unprefixed, so it matches the href option below; this entry covers the
 experimental members around it.
 `experimental_toSettings()` opens the calling plugin's settings page, and
@@ -2198,8 +2262,11 @@ because its hits can be non-message events. Every reveal of a message in the
 timeline, whether from a message link, the palette or the thread outline,
 runs through `useScrollToSearchedMessage`: it loads older pages, keeps the
 target rendered, waits for its position to settle, highlights it, and toasts
-when it is missing. The outline sends an in-place request with the
-message's seq instead of a URL, so it adds no history entry. `getSettingsTargetPath`
+when it is missing. bb's thread outline reveals through `toThread` itself
+(`core-contributions/thread-outline.tsx`), so it gets the same in-place
+replace as a plugin; the private in-place reveal request it used before is
+gone. Test: `plugin-navigation-hooks.test.tsx` (replace while the route or the
+calling pane shows the thread, push otherwise). `getSettingsTargetPath`
 (`settings-sections.ts`) is the only settings path builder: sections, plugin,
 machine and project pages, including `experimental_toSettings` and
 `experimental_settingsHref`. The sidebar footer's `openSettings` /
@@ -3051,17 +3118,31 @@ Docs: `frontend-hooks-and-ui.md`.
 
 ## `app.experimental_useQuestionFormHost` (`@get-bb/plugin-sdk/app`)
 
-Returns the remappable answer shortcuts bb binds while a pending interaction is
-open, keyed by option index, and `registerChoiceHandler` for a chosen index.
+Returns where a pending interaction form renders and the remappable answer
+shortcuts bb binds while it is open. `density` is `"compact"` in a parent
+thread's Active child threads card, and `promptShownAbove` is the question
+text that card already shows. `shortcuts`
+is keyed by option index, with `registerChoiceHandler` for a chosen index.
 `actionShortcuts` and `registerActionHandler` do the same for the form actions
 `submit`, `previous`, `next`, and `cancel` (`question.submit`,
 `question.previous`, `question.next`, `question.cancel`); action shortcuts also
 fire from text fields inside an element marked `data-question-form`. Core's
 card uses `actionShortcuts` only for `aria-keyshortcuts` and shows no action
-shortcut labels.
-Core's own question card (`@bb/shared-ui/question-form`, rendered by
-`UserQuestionAnswerForm`) reads the same host through `ThreadQuestionFormHost`.
-Outside a pending interaction the maps are empty and handlers never run.
+shortcut labels. Outside a pending interaction the maps are empty, handlers
+never run, `density` is `"default"`, and `promptShownAbove` is null.
+
+Core callers on the same path: `@bb/shared-ui/question-form`, which is also
+the registry's `question-form` item, reads the host through this hook. In the
+app, `apps/app/vite-core-plugin-sdk-app.ts` binds shared-ui's
+`@get-bb/plugin-sdk/app` imports to `src/lib/shared-ui-plugin-sdk-app.ts`,
+whose members are the runtime's own (`core-plugin-sdk-app.test.ts`). Core's
+user question (`UserQuestionAnswerForm`) and every plugin form render inside
+the same `ThreadQuestionFormHost`, and both forms' Cancel run
+`usePendingInteractionCancel`, which also backs the `cancel` prop of
+`PluginPendingInteractionProps`: it cancels a plugin request or stops the turn
+of a provider request, wherever the form renders. The Active child threads
+card leaves a question without answering through its own Back control and
+Escape, not through the form.
 
 Docs: `frontend-hooks-and-ui.md`.
 
@@ -3074,10 +3155,16 @@ Docs: `frontend-hooks-and-ui.md`.
 3. **Focus marker.** Action shortcuts reach a form's text fields only through
    the `data-question-form` attribute. Decide whether a ref or wrapper
    component should replace the attribute before the prefix drops.
-4. **Consumer count.** Two first-party consumers (Ask User Question, pi's
-   extension dialogs), through the shared question form. The first
-   third-party form is koenvg's pi-subagents provider (2026-11-06 marketplace
-   audit); audit items 1–3 against it.
+4. **Consumer count.** Four first-party plugins render forms inside the host:
+   Ask User Question, Codex (async questions through the shared question form,
+   and its MCP elicitation form), pi's extension dialogs, and Secrets. bb's own user question reads it through the shared
+   question form. Third-party forms: koenvg's pi-subagents provider
+   (2026-11-06 marketplace audit) and brsbl's content-calendar and
+   thread-organizer, which call `cancel` directly; audit items 1–3 against
+   them.
+5. **Inline fields.** `density` and `promptShownAbove` describe one
+   placement, the Active child threads card. Decide whether a single
+   `placement` value should replace them before the prefix drops.
 
 ## `app.slots.experimental_providerIcon` (`@get-bb/plugin-sdk/app`)
 
@@ -3228,7 +3315,15 @@ The host-owned new-thread compose surface. It calls `onSubmit` with a
 `NewThreadRequest` carrying every resolved selection (including
 `sessionOptions` when the user changed a provider's agent option), and the plugin then
 creates the thread with `bb.sdk.threads.spawn`, which owns filing and
-attribution.
+attribution. A submission from a plugin's `useComposer().submit({ experimental_data })`,
+such as Drafts' "Save draft" send-menu row, also carries
+`pluginSubmission: { pluginId, data }`, the field `threads.spawn` already
+accepts, so forwarding the request unchanged keeps the row working; the
+server hands it to dispatch hooks as `experimental_submission`. The New thread
+screen submits the same `NewThreadRequest` type (`RootComposeView`), so core
+and plugins share one declared request. Conductor's `NewChatPage` forwards it
+to `spawn`; community embedders that rebuild the request field by field drop
+it and turn "Save draft" into an ordinary send.
 
 **Core callers.** The New thread screen (`RootComposeView`) renders the same
 `apps/app/src/components/promptbox/NewThreadComposer.tsx`;
@@ -3942,9 +4037,8 @@ A thread pane shows its thread context one of two ways, its
 `ExperimentalThreadContextKind`: `banner`, the context row above the composer,
 or `card`, the thread context card at the pane's upper-right.
 `experimental_useThreadContextKind()` returns the kind of the pane the calling
-component renders in, `banner` outside a thread pane. A pane is `card` while
-the `threadContextCard` experiment is on, for a thread opened as a page whose
-pane is wide enough to fit the card beside the transcript (the `card` layout
+component renders in, `banner` outside a thread pane. A pane is `card` for a
+thread opened as a page whose pane is wide enough to fit the card beside the transcript (the `card` layout
 `ThreadContextCard` measures), except on phones (a compact
 viewport with a coarse pointer, the rule `MessageActionBar` uses). A narrower
 pane is `banner` and its header button opens the card as a popover. Threads
@@ -4140,6 +4234,36 @@ Docs: `frontend-thread-header-row.md`.
 4. **Window title.** Decide whether a plugin should be able to set the window
    title for a thread, or whether it stays core-owned.
 
+## `app.slots.experimental_threadRail` and `app.slots.experimental_threadRailOutline` (`@get-bb/plugin-sdk/app`)
+
+Requires SDK 0.6.196.
+
+- **Surface:** `PluginAppSlots.experimental_threadRail(registration)` with `ExperimentalThreadRailRegistration` (`{ id, order?, component }`) and `ExperimentalThreadRailProps` (the header row's `{ threadId, projectId, environment }` plus `visible`); `PluginAppSlots.experimental_threadRailOutline(registration)` with `ExperimentalThreadRailOutlineRegistration` (`{ id, component }`) and `ExperimentalThreadRailOutlineProps` (an alias of the rail props). The pair mirrors `experimental_threadHeaderRow` (additive) and `experimental_threadHeaderTitle` (exclusive).
+- **Behavior:** `PluginThreadRail` (`apps/app/src/components/plugin/PluginThreadRail.tsx`) renders a column at the right edge of the conversation, in the scroll overlay of thread pages and split panes (not panel or transcript presentations). At the top it renders one outline, chosen by the shared exclusive-slot rule from the synced `threadRail.outlineProvider` pick: a plugin key, `__builtin__` for bb's outline, or Automatic (the first outline from a plugin the user installed by plugin id, then bb's own bundled or official-marketplace ones, then bb's). "Thread outline" under Settings > Appearance > Interface sets it, as does `bb settings ui set threadRail.outlineProvider`. Below the outline, rail items stack by `order` (unset last, then registration order). Each mounts in its own `PluginSlotMount`; a crashing rail item disappears for that thread, and a crashing plugin outline is replaced by bb's for that thread. While the pane's content box is under 56rem, the whole rail stays mounted but hidden and inert, and every component receives `visible: false`, so it can pause reads. `visible` is a prop rather than a hook because the sibling slot props already carry host layout state that way (`isCompactViewport` on sidebar navigation, sidebar header, thread list and browser toolbar props); `experimental_useTabVisible` is a hook only because one tab component serves several prop shapes.
+- **Core callers:** bb's thread outline (`apps/app/src/core-contributions/thread-outline.tsx`) registers through `experimental_threadRailOutline` with `definePluginApp`, imports only public SDK members and registry items (`bb/core-contribution-imports`), and is collected once as the builtin (`BUILT_IN_THREAD_RAIL_OUTLINE` in `PluginThreadRail.tsx`, so only the thread view loads it) rather than as a claimant, so `__builtin__` renders it through the plugin shape. `ThreadScreen` mounts `PluginThreadRail` where it used to mount `ThreadTableOfContents`. bb registers no rail item. Tests: `PluginThreadRail.test.tsx` (bb's outline through the public hooks, narrow-pane hiding with `visible: false`, Agent replies read only on that tab, an archived sender's title, the active prompt from the viewport, the twenty-tick cap, a plugin outline under Automatic with items below, `__builtin__`, crash fallback), `pinned-replacement-surfaces.test.tsx` and `exclusive-pick-first-paint.test.ts` (the pick in the shared exclusive-slot tables), `plugin-app-thread-rail.test.ts` (registration).
+- **Plugin callers:** none in-repo. Community outline plugins (threadline, which hides `[data-thread-toc]` to replace bb's outline) can register an outline; minimap-like strips can register rail items.
+- **Stabilization:** decide whether the rail needs a placement other than right of the conversation (sticky-prompt and pinned-turns draw over the top of the transcript, with no core caller yet), whether rail items need groups, and whether the outline pick needs an off value. Then rename project-wide and remove this entry.
+
+## `experimental_useConversationOutline` (`@get-bb/plugin-sdk/app`)
+
+Requires SDK 0.6.196.
+
+- **Surface:** `PluginSdkApp.experimental_useConversationOutline(threadId, role, options?: { enabled? }): ExperimentalConversationOutline`, `ExperimentalConversationOutline` (`{ status, items }`) and `ExperimentalConversationOutlineItem` (`{ id, messageSeq, role, preview, senderThreadId, attachmentSummary }`).
+- **Behavior:** `useConversationOutline` (`apps/app/src/lib/conversation-outline.ts`) reads the whole thread's user prompts or assistant replies through the conversation outline route behind `useSdk().threads.conversationOutline`, which refreshes when a turn completes, and lays the messages of the thread's loaded timeline page over it by id (live first, new ones appended), so prompts appear as they are sent and replies as they stream. It reads the timeline from the query cache with a disabled observer, so it never fetches a timeline itself; inside the thread's own pane it waits for the pane's first timeline page before reading the whole thread. A whole-thread read taken before the latest context clear is ignored until it reloads. Messages nested under a collapsed turn count, as on the server. `preview` is the text's start with whitespace collapsed, at most 200 characters, without a `[bb message from thread:<id>]` prefix, whose id becomes `senderThreadId`. `items` keeps its identity until an item changes: on a 713-word streamed reply the user list changed once while bb's previous outline re-rendered 41 to 58 times. bb's outline reads replies only while its popover is open, so the rail does not re-render while a reply streams. A streaming reply's `messageSeq` is its latest update's sequence until it completes. `enabled: false` makes no request and leaves `status` at `loading`.
+- **Core callers:** bb's thread outline (`core-contributions/thread-outline.tsx`) reads `user` always and `assistant` only while its Agent tab is open, both disabled while the rail is hidden. Tests: `conversation-outline.test.tsx` (merge and append, nested rows, the context boundary, waiting for the pane's first timeline page and `enabled: false`, no re-render while the pane refetches an unchanged timeline, identity while a reply streams).
+- **Plugin callers:** none in-repo. Community readers of `conversationOutline` (sticky-prompt, threadline, pinned-turns, maxwell, genui) can switch from polling.
+- **Stabilization:** decide whether items need the user message's initiator (system messages) and whether a streaming reply should keep a stable seq. Then rename project-wide and remove this entry.
+
+## `experimental_useTimelineViewport` (`@get-bb/plugin-sdk/app`)
+
+Requires SDK 0.6.196.
+
+- **Surface:** `PluginSdkApp.experimental_useTimelineViewport(): ExperimentalTimelineViewport | null` and `ExperimentalTimelineViewport` (`{ visibleMessageIds, atLatest }`).
+- **Behavior:** `ThreadScreen` wraps each thread page in `TimelineViewportProvider` (`apps/app/src/lib/timeline-viewport.tsx`), one store per pane holding the ids of the pane's conversation rows. `TimelineViewportScrollSource`, mounted inside the pane's scroll body, hands the store the scroll element, so the hook reads only the store and does not re-render with the scroll body as a reply streams. It answers for the pane the component renders in (the rail, message metadata, timeline renderers) and is null elsewhere, including panel and transcript presentations and the thread header. The store listens to scroll and resize only while something subscribes, measures 120 ms after they settle with a binary search over mounted message rows (at most 0.2 ms on a 143-turn thread), and notifies only when the visible ids or `atLatest` (within 4 px of the bottom) change. Ids rather than seqs because a streaming reply's seq moves.
+- **Core callers:** bb's thread outline marks the first visible prompt and reply, or the last ones at the latest message. Tests: `timeline-viewport.test.tsx` (visible ids top to bottom, `atLatest`, logarithmic measurements, settle timing and render count, null outside a pane) and `PluginThreadRail.test.tsx` (the outline's active tick).
+- **Plugin callers:** none in-repo. sticky-prompt, threadline, minimap and pinned-turns compute the same from the DOM.
+- **Stabilization:** decide whether the thread header should get the answer too (it renders outside the pane's scroll body) and whether callers need the turn that owns the top row when no message is in view. Then rename project-wide and remove this entry.
+
 ## `app.slots.experimental_threadRowMetadata` / `experimental_ThreadRowMetadata` (`@get-bb/plugin-sdk/app`)
 
 A registration is `{ id, order?, useData?, component }`. `useData` is a React
@@ -4206,8 +4330,11 @@ Docs: `frontend-registration.md`, `frontend-pull-requests.md`.
 
 A registration is `{ id, title, icon, group, order?, placement?, useData?, item }`.
 `useData` runs once per registration for the whole app and receives
-`{ threadIds }`, every thread a visible surface evaluates actions for,
-debounced (32 ms quiet, 100 ms max). `item` is a pure function of
+`{ threadIds, experimental_threads }`: every thread a visible surface
+evaluates actions for, debounced (32 ms quiet, 100 ms max), and the targets
+`item` receives for those ids, leaving out threads bb has not loaded yet.
+The Git plugin's Commit reads `experimental_threads` for each open thread's
+environment instead of fetching every thread with `threads.get`. `item` is a pure function of
 `{ thread, data, sdk, navigate }` returning a `PluginThreadAction` or null;
 throws drop the registration or that thread's item, and `run` errors are
 contained. Registrations sort by `group`, `order`, then registration order
@@ -4228,11 +4355,37 @@ of the header. A header registration's `useData` receives only the threads
 whose header is on screen, so per-thread reads scale with open panes, not
 sidebar rows. The Git plugin's Commit is the only header action.
 
+**One target.** Every surface hands the host a thread by id:
+`experimental_useThreadActions(thread)`, the menus' `thread`, and
+`experimental_bulkThreads` read only `id` (their type is `{ id: string }`, so a
+`PluginSidebarThread`, an `ExperimentalThread`, or an old hand-built target
+all still fit). `thread-action-target.tsx` builds the
+`PluginThreadActionTarget` on `experimental_useThread`'s resolution
+(`thread-state.ts`: the held sidebar entry, else the thread query) plus the
+environment's path, through `threadReadSource`, the non-hook form of that
+resolution. For ids the sidebar does not hold, `ThreadActionCollectors` mounts
+a loader that calls `useThreadState` and `useEnvironment`. `item`,
+`experimental_bulkItem` and `useData`'s `experimental_threads` all read that
+one resolution, so the header, row menus, quick actions, selection menus,
+the palette commands and plugin lists see the same target. `environment` is
+the thread's environment with its checkout `path` (null before the checkout
+exists or after it is removed), its setup `status`, and its machine's
+`hostLifecycle`, or null when the thread has none or bb cannot read it. A
+held entry carries all four from the server's thread list entry
+(`environmentStatus` and `environmentHostLifecycle`, joined from the
+environment and its host; an environment `status-changed` event, which host
+lifecycle changes also send, refreshes the sidebar threads in that
+environment); a fetched thread reads them from the environment query. Core's
+New thread in environment reads them: it shows, on every surface, only for
+an environment with a checkout that is ready or still provisioning on an
+active machine, the rule the thread page's own New thread in environment
+button uses.
+
 `experimental_bulkItem` is an optional pure function of
 `{ threads, data, sdk, navigate }` (two or more selected threads in list
 order) returning one action for the whole selection, or null.
 `experimental_ThreadActionsContextMenu`'s optional `experimental_bulkThreads`
-(the selected targets) and `onEscapeKeyDown` turn the row's menu into the
+(the selected threads, by id) and `onEscapeKeyDown` turn the row's menu into the
 selection menu when it holds two or more threads: a "N threads selected"
 heading, every registration's bulk item in the same group order as the
 thread menu, then `inline`, with every selected id retained in `useData`'s
@@ -4245,8 +4398,10 @@ takes `threadBulkActions` for the entries it lists.
 public SDK and registry items (`bb/core-contribution-imports`) and collected
 as `CORE_THREAD_ACTIONS` under the reserved `bb--core` owner. The header menu (`ThreadDetailView` →
 `ThreadDetailHeader`), `RootComposeMobileRecents`, and
-`PaneThreadActionCommandHandler` read the same registry, and the thread list's
-row menus and quick actions use the SDK exports. The contract table in
+`PaneThreadActionCommandHandler` read the same registry with the thread they
+show, and the thread list's and Conductor's row menus, quick actions and
+selection menu pass their `PluginSidebarThread`s to the SDK exports; neither
+plugin builds a target. The contract table in
 `ThreadActionsMenu.test.tsx` runs every menu surface against the same
 registrations. Core's Mark read, Pin, Notify parent, Archive and Delete
 registrations carry the bulk items; Notify parent reads the target's
@@ -4267,10 +4422,13 @@ Docs: `frontend-registration.md`, `frontend-thread-list.md`.
 
 **Audit before stabilizing.**
 
-1. **Per-thread data.** `threadIds` makes each registration fetch and cache
-   per-thread state itself. Decide whether a host attributes layer should
-   batch those reads across registrations, and whether `useData` should move
-   onto `experimental_useRpcQuery`.
+1. **Per-thread data.** `experimental_threads` carries the target fields;
+   anything else per thread (git status, notification levels) each
+   registration still fetches and caches itself. Decide whether a host
+   attributes layer should batch those reads across registrations, whether
+   `useData` should move onto `experimental_useRpcQuery`, and whether
+   `threadIds` should go once `experimental_threads` is stable. Requires SDK
+   0.6.202.
 2. **Picker catalog.** The row-actions picker lists every registration,
    including actions that rarely make sense as row buttons (Delete, New thread
    in environment). Decide whether a registration should opt out.
@@ -4404,14 +4562,13 @@ Requires SDK 0.6.178.
    split layout, not the calling surface. Check plugin-hosted surfaces (nav
    panel pages, overlays) once they host threads.
 
-
 ## `experimental_makeActionContext` / `ExperimentalActionContextFixture` / `ExperimentalActionContextCall` (`@get-bb/plugin-sdk/testing`)
 
 Requires SDK 0.6.178.
 
 - **Surface:** `experimental_makeActionContext(overrides?: Partial<ExperimentalPluginActionContext>): ExperimentalActionContextFixture`,
   a complete `ExperimentalPluginActionContext` plus `calls:
-  ExperimentalActionContextCall[]` (`{ member, args }`). Defaults record each
+ExperimentalActionContextCall[]` (`{ member, args }`). Defaults record each
   call: `threadRequests` methods resolve, `composer` is null, `navigate` methods return
   false except `experimental_threadHref` and `experimental_settingsHref`,
   which return the test harness's paths (`/threads/<id>#msg=<seq>`,
@@ -4431,6 +4588,7 @@ Requires SDK 0.6.178.
   `NavigateCall` shape `renderSlot` uses, and whether composer and message
   contexts need their own builders once their fields grow. Then rename
   project-wide and remove this entry.
+
 ## `app.slots.experimental_browserToolbarAction` (`@get-bb/plugin-sdk/app`)
 
 Renders a plugin component beside the address bar in each Browser tab. It
@@ -4705,10 +4863,11 @@ returns discards the environment, as for a fresh create. After a restart
 between adopt and create returning, core discards the environment (removed
 with the resource adopt recorded) and puts the thread back on its provider
 request, so it is provisioned again (`restartInterruptedHandOff`). Its only
-caller is the Worktree plugin's warm pool, which checks a member under the git
-ref lock, adopts it with a resource naming its placeholder branch,
-fast-forwards it and calls `setup(path)` when it is behind the remote's default
-base, waits for the thread's branch name, and renames the placeholder last.
+caller is the Worktree plugin's warm pool, which in one host call checks a
+member under the git ref lock and fast-forwards it when it is behind the
+remote's default base, adopts it with a resource naming its placeholder branch,
+calls `setup(path)` when it moved, waits for the thread's branch name, and
+renames the placeholder last.
 Its removal also deletes the branch named in the worktree's completion file,
 which the rename writes first, so a restart after the rename leaks nothing.
 Disabling or uninstalling a plugin releases its holds on environments no
@@ -5351,6 +5510,22 @@ Redirects after a deletion or a disabled plugin and route repair only build the
 path. Requested in #8011 (a nav panel opening the composer beside a note) and
 #2795.
 
+**Replacing the draft.** `toCompose({ initialPrompt, experimental_replacePrompt: true })`
+replaces a draft that already has text with `initialPrompt`; without it the
+draft wins and `initialPrompt` is dropped, and without `initialPrompt` the
+option does nothing. It maps to `openNewThread`'s `replaceInitialPrompt`, the
+option bb's own Create skill, Fork skill, Edit skill via chat, Edit plugin
+via chat and Create plugin from a template pass (`SkillsLibrary.tsx`,
+`ToolsView.tsx`, `PluginsOverview.tsx`), so both read the
+same route state in `RootComposeView`. It replaces a hidden branch that gave
+only the Automations plugin `replace` + `replaceInitialPrompt`, and only on
+its edit route, where its one `toCompose` button (Edit with chat) is disabled.
+Callers: Automations' New automation, template Use and Edit with chat
+(`plugins/automations/app.tsx`). Before stabilizing, check the about 45
+community `toCompose({ initialPrompt })` callers for ones that want the
+replacement, and decide whether it should be the default for
+`focusPrompt: true` entry points.
+
 ## Provider discovery metadata
 
 `package.json` → `bb.experimental_providers` statically declares
@@ -5382,9 +5557,40 @@ Core callers: the project settings Folders section
 `bb project folder list|add|update|remove`.
 
 Before stabilizing, decide whether folders belong on the checkout (per
-machine) or on the project with per-machine paths, whether environment
-providers should read them (for example to make a worktree of each), and
-whether `list` should report which folders are missing on the machine.
+machine) or on the project with per-machine paths, and whether `list` should
+report which folders are missing on the machine. The Worktree environment
+provider reads them to offer and validate the folders it can branch
+(`listBranchableFolders`, `validate`).
+
+## Environment repos (`sdk.environments.experimental_repos`, also on `PluginBbSdk`)
+
+`experimental_repos({ environmentId })` returns `{ repos, truncated }` for a
+ready environment. Each repo has `rootPath` (the git top level), `path` (the
+folder the thread works in, which differs from `rootPath` when the
+environment's folder is a subfolder of a repo), `label` (`""` for the main
+folder's repo; otherwise the repo's path relative to the main folder, with
+`..` segments for repos outside it, so it never collides with a path inside
+the main repo) and `source` (`main`, `folder` for a project or environment
+folder that is itself in a repo, `discovered` for a repo found inside a
+folder that is not). Discovery runs on the host (`host.find_git_repos`):
+two levels deep, skipping hidden and dependency folders, stopping at each
+repo (a `.git` directory or file, so linked worktrees count), deduplicating
+symlinked folders by real path, and at most 32 repos per folder (`truncated`
+then). The server keeps the result in memory for 10 seconds per environment;
+nothing is stored. Route: `GET /environments/:id/repos`; CLI:
+`bb environment repos <id>`.
+
+Core callers: the agent's instructions (`thread-runtime-config.ts`, which
+names the repos found inside each folder and skips discovery when the main
+folder is a repo and there are no extra folders), the git plugin's Changes
+panel (`plugins/git/server/reads.ts`, which groups changes by repo and runs
+git from each repo's top level), and `bb environment repos`. The GitHub PR
+status plugin is the next intended reader.
+
+Before stabilizing, decide whether the list should refresh on file-system
+events rather than a 10-second cache, whether repos found inside the main
+repo (nested clones) should ever be listed, and whether `label` should be a
+display name separate from the path prefix the git plugin uses.
 
 ## Global prompt history (`bb.sdk.experimental_promptHistory`)
 
@@ -5677,7 +5883,7 @@ field introduces no separate backend or headless side effect.
 ## Plugin RPC contract and client-state guarantees
 
 - All three live hooks use `{ contract, method, ... }` with contract/method inference and no explicit generic arguments. Plain reads add `input`, keyed reads add `keys` and optional `select`, and mutations add optional `optimistic`. `experimental_useRpcKeyedQuery({ contract, method, keys, select? })` infers rows and selection results from the contract value. `ExperimentalRpcKeyedMethod` restricts methods to schemas accepting only `{ keys: string[] }` plus optional/defaulted fields and returning string-indexed records; `ExperimentalRpcKeyedValue` derives their row values. The keyed state's `refetchKeys(keys)` reads only the given keys again and keeps the other rows; the Git plugin retries one failed patch or one environment's status with it. `defineRpcContract` rejects `keyTags` unless parsed input has string keys and output is a string-indexed record. Push-notifications is the first caller. Stabilization includes transformed schemas, invalid shapes and projected selections.
-- `experimental_PluginRpcCallError` is exported from the SDK root and app entry and is the error of live read/mutation hooks and every rejected `mutate`. It always has `code: PluginRpcErrorCode`, `message`, optional validated issues and optional HTTP status. `transport_error`, `invalid_response` and `unknown_error` cover client failures. The union may grow: consumers need a fallback; unknown server codes map to `unknown_error` and remain in `serverCode`. CLI output preserves newer codes without assuming an exhaustive list. Core callers use the same HTTP, SDK and command error boundaries; bb-account exercises expected refusals. Stabilize after version-skew, transport, malformed-response and refusal checks.
+- `experimental_PluginRpcCallError` is exported from the SDK root and app entry and is the error of live read/mutation hooks and every rejected `mutate`. It always has `code: PluginRpcErrorCode`, `message`, optional validated issues and optional HTTP status. `transport_error`, `invalid_response` and `unknown_error` cover client failures; `plugin_not_found`, `plugin_not_running`, `invalid_caller`, `forbidden_origin` and `unsupported_media_type` (SDK 0.6.195) are the route's own failures before a handler runs. The union may grow: consumers need a fallback; unknown server codes map to `unknown_error` and remain in `serverCode`. CLI output preserves newer codes without assuming an exhaustive list. Core callers use the same HTTP, SDK and command error boundaries; bb-account exercises expected refusals. Stabilize after version-skew, transport, malformed-response and refusal checks.
 - `mutate`, `isPending` and `pendingInputs` finish at write acknowledgement. Core thread writes have the same semantics through `useTaggedMutation`. Cache predictions survive background refreshes and failed rereads until fresh confirmed data arrives. Write rejection rolls back. Owner tests cover acknowledgement, held refreshes, reconciliation and concurrent predictions.
 - BB read state means: `data` is the latest successful value plus predictions, retained during refresh errors (plain reads start undefined; keyed selections receive loaded rows, initially an empty record). `isLoading` means an enabled read is fetching never-loaded requested data. `isFetching` includes background attempts; keyed views share method activity. `error` records the completed read failure and clears on success; retrying a first load clears its old error while loading. `refetch` forces a read and waits through retries; failure remains in `error` and its promise resolves. Production freshness is two seconds without polling. Focus does not refetch while BB's realtime connection is healthy; while disconnected, focus/browser-online events recheck stale active reads. BB reconnect invalidates all plugin reads regardless of freshness. Page hiding cancels active attempts and resume restarts cancelled reads. Invalidations refresh immediately. Tags remain plain strings. Network/abort failures retry twice with 250 ms delay, HTTP failures never retry, and writes never retry automatically. No query-library options are exposed.
 
@@ -5776,6 +5982,21 @@ neoromantic/bb-plugin-subthread-columns (`contract.ts`). Shuttle, vantage,
 gtd-sidebar and kitchen-sink, named by the October scan, have migrated.
 Remove the runtime path and the field from `ContractTagDeclarations`
 consumers in the plugin SDK only after those plugins have migrated.
+
+## Retired composer menu-row `run` member `view`
+
+`plusMenu` and `sendMenu` rows' `run` context carries `view: ComposerView`
+besides `ExperimentalComposerActionContext`, for plugins built when `run` got
+`{ composer, view }`. It is declared only on the host
+(`RetiredComposerMenuRunMembers` in
+`apps/app/src/components/plugin/PluginComposerActions.tsx`) and is not in
+`@get-bb/plugin-sdk/app`'s types; `composer.scope`, `composer.isEmpty`,
+`composer.attachmentCount`, `composer.isRunning` and `composer.isSubmitting`
+replace its fields. Callers
+in the November 2026 community scan: patleeman/bb-plugins'
+agent-checklists (`view.scope`), suiramdev/bb-plugin-rephrase and
+MacHatter1/bb-plugin-orchestrator-mode. Remove the member after they migrate
+to `composer`.
 
 ## Retired composer renderer `view` and `key` runtime members
 

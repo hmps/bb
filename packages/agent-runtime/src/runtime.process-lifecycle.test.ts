@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -8,7 +9,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   afterEach,
   beforeEach,
@@ -37,7 +37,6 @@ import {
 } from "@bb/provider-bridge-protocol/bridge-kit";
 import {
   createScriptedEchoLaunch,
-  scriptedEchoBridgeModulePath,
   createScriptedEchoProcessLog,
   createScriptedEchoRequestRecord,
   createScriptedEchoRuntime,
@@ -107,6 +106,7 @@ describe("createAgentRuntime process lifecycle", () => {
   let tmpDir: string;
   let tracker: ChildProcessTracker;
   let lifeline: ProcessLifeline;
+  let idleProviderManager: RuntimeProviderProcessManager | undefined;
 
   beforeEach(async () => {
     tracker = trackChildProcesses();
@@ -115,6 +115,8 @@ describe("createAgentRuntime process lifecycle", () => {
   });
 
   afterEach(async () => {
+    await idleProviderManager?.shutdown();
+    idleProviderManager = undefined;
     tracker.dispose();
     await lifeline.close();
     vi.unstubAllEnvs();
@@ -254,45 +256,50 @@ describe("createAgentRuntime process lifecycle", () => {
     await runtime.shutdown();
   });
 
+  function createIdleAdapter(
+    script = "process.stdin.resume()",
+  ): BridgeProtocolAdapter {
+    return {
+      ...createManagerAdapter({}),
+      process: {
+        command: process.execPath,
+        args: ["-e", script],
+      },
+      buildPostInitializeRequests: () => [],
+    };
+  }
+
+  function createIdleProviderManager(
+    script?: string,
+  ): RuntimeProviderProcessManager {
+    const adapter = createIdleAdapter(script);
+    const manager = createProviderProcessManager({
+      createAdapter: () => adapter,
+      onProcessExit: vi.fn(),
+      workspacePath: tmpDir,
+    });
+    idleProviderManager = manager;
+    return manager;
+  }
+
   it.runIf(process.platform === "linux")(
     "ranks provider processes ahead of bb for the out-of-memory killer",
     async () => {
-      const reportPath = join(tmpDir, "provider-oom-score-adj");
-      const reportingBridgePath = join(tmpDir, "oom-reporting-bridge.mjs");
-      writeFileSync(
-        reportingBridgePath,
-        [
-          'import { readFileSync, writeFileSync } from "node:fs";',
-          `export * from ${JSON.stringify(pathToFileURL(scriptedEchoBridgeModulePath).href)};`,
-          `writeFileSync(${JSON.stringify(reportPath)}, readFileSync("/proc/self/oom_score_adj", "utf8"));`,
-        ].join("\n"),
+      const manager = createIdleProviderManager(
+        'process.stdin.once("data", () => process.stdout.write(require("node:fs").readFileSync("/proc/self/oom_score_adj", "utf8")))',
       );
-      const adapter = createProviderForId("fake", {
-        bridgeLaunch: createScriptedEchoLaunch({
-          modulePath: reportingBridgePath,
-        }),
-      });
-      const manager = createProviderProcessManager({
-        createAdapter: () => adapter,
-        onProcessExit: vi.fn(),
-        workspacePath: tmpDir,
-      });
-      onTestFinished(() => manager.shutdown());
-
       await manager.ensureProvider(MANAGER_PROVIDER);
-
+      const { child } = manager.requireProviderProcess(MANAGER_PROVIDER);
+      const output = once(child.stdout, "data");
+      child.stdin.write("go\n");
+      const [score] = await output;
       const ownScore = Number(readFileSync("/proc/self/oom_score_adj", "utf8"));
-      expect(Number(readFileSync(reportPath, "utf8"))).toBe(
-        Math.min(1_000, ownScore + 500),
-      );
+      expect(Number(score)).toBe(Math.min(1_000, ownScore + 500));
     },
   );
 
   it("retires a threadless bridge process superseded by a new artifact hash", async () => {
-    const manager = createProviderProcessManager({
-      onProcessExit: vi.fn(),
-      workspacePath: tmpDir,
-    });
+    const manager = createIdleProviderManager();
 
     const staleKey = "fake#bridge:aaaaaaaaaaaaaaaa";
     const freshKey = "fake#bridge:bbbbbbbbbbbbbbbb";
@@ -328,15 +335,10 @@ describe("createAgentRuntime process lifecycle", () => {
         providerId: "fake",
       }).child.killed,
     ).toBe(false);
-
-    await manager.shutdown();
   });
 
   it("keeps an old-hash bridge process that still owns a thread", async () => {
-    const manager = createProviderProcessManager({
-      onProcessExit: vi.fn(),
-      workspacePath: tmpDir,
-    });
+    const manager = createIdleProviderManager();
 
     const staleKey = "fake#bridge:aaaaaaaaaaaaaaaa";
     await manager.ensureProvider({
@@ -351,7 +353,7 @@ describe("createAgentRuntime process lifecycle", () => {
     staleProcess.identity.threadIds.add("thread-live");
 
     await manager.ensureProvider({
-      bridgeLaunch: MANAGER_BRIDGE_LAUNCH,
+      bridgeLaunch: SUPERSEDING_BRIDGE_LAUNCH,
       processKey: "fake#bridge:bbbbbbbbbbbbbbbb",
       providerId: "fake",
     });
@@ -368,10 +370,7 @@ describe("createAgentRuntime process lifecycle", () => {
   });
 
   it("waits for provider retirement before starting a same-key replacement", async () => {
-    const manager = createProviderProcessManager({
-      onProcessExit: vi.fn(),
-      workspacePath: tmpDir,
-    });
+    const manager = createIdleProviderManager();
     await manager.ensureProvider(MANAGER_PROVIDER);
     const retiringProcess = manager.requireProviderProcess(MANAGER_PROVIDER);
     await Promise.all([
@@ -387,28 +386,30 @@ describe("createAgentRuntime process lifecycle", () => {
 
   it("does not wait for stalled replacement initialization during full shutdown", async () => {
     const stalledBridge = join(tmpDir, "stalled-provider.cjs");
-    const stalledBridgeStarted = join(tmpDir, "stalled-provider-started");
     writeFileSync(
       stalledBridge,
-      `require("readline").createInterface({input:process.stdin}).once("line",line=>{require("fs").writeFileSync(${JSON.stringify(stalledBridgeStarted)},"");setTimeout(()=>console.log(JSON.stringify({jsonrpc:"2.0",id:JSON.parse(line).id,result:{protocolVersion:2,capabilities:{grammarVersions:[3,3]}}})),3000)});`,
+      `require("readline").createInterface({input:process.stdin}).once("line",line=>{process.stderr.write("stalled-initialize-received\\n");setTimeout(()=>console.log(JSON.stringify({jsonrpc:"2.0",id:JSON.parse(line).id,result:{protocolVersion:2,capabilities:{grammarVersions:[3,3]}}})),3000)});`,
     );
     let starts = 0;
+    let markInitializing: () => void = () => {};
+    const replacementInitializing = new Promise<void>((resolve) => {
+      markInitializing = resolve;
+    });
     const manager = createProviderProcessManager({
       createAdapter: () =>
-        createManagerAdapter(
-          starts++ === 0 ? {} : { rawScriptPath: stalledBridge },
-        ),
+        starts++ === 0
+          ? createIdleAdapter()
+          : createManagerAdapter({ rawScriptPath: stalledBridge }),
       onProcessExit: vi.fn(),
+      onStderr: (line) => {
+        if (line.includes("stalled-initialize-received")) markInitializing();
+      },
       workspacePath: tmpDir,
     });
     await manager.ensureProvider(MANAGER_PROVIDER);
     const retirement = manager.shutdownProvider(MANAGER_PROVIDER);
     const replacementStart = manager.ensureProvider(MANAGER_PROVIDER);
-    await waitForRuntimeState({
-      label: "the replacement bridge to begin initialization",
-      predicate: () => existsSync(stalledBridgeStarted),
-      timeoutMs: 1_000,
-    });
+    await replacementInitializing;
     expect(starts).toBe(2);
     const replacementProcess = manager.requireProviderProcess(MANAGER_PROVIDER);
     onTestFinished(async () => {
@@ -480,17 +481,16 @@ describe("createAgentRuntime process lifecycle", () => {
   it("drains provider stderr before reporting process exit", async () => {
     const exitInfo = vi.fn<NonNullable<AgentRuntimeOptions["onProcessExit"]>>();
     const crashScript = join(tmpDir, "delayed-stderr-provider.cjs");
-    const delayedWriter =
-      'setTimeout(() => process.stderr.write("stderr-after-exit"), 50);';
+    const exitWatcher =
+      'process.on("disconnect", () => setTimeout(() => process.stderr.write("stderr-after-exit"), 50)); process.send("ready");';
     writeFileSync(
       crashScript,
       `const { spawn } = require("node:child_process");
-      const writer = spawn(process.execPath, ["-e", ${JSON.stringify(delayedWriter)}], {
+      const writer = spawn(process.execPath, ["-e", ${JSON.stringify(exitWatcher)}], {
         detached: process.platform === "win32",
-        stdio: ["ignore", "ignore", "inherit"],
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
       });
-      writer.unref();
-      process.exit(42);`,
+      writer.once("message", () => process.exit(42));`,
     );
     const manager = createProviderProcessManager({
       onProcessExit: exitInfo,
@@ -1480,14 +1480,18 @@ describe("createAgentRuntime process lifecycle", () => {
       onEvent: () => {},
       onToolCall: async () => ({ contentItems: [], success: true }),
     });
-    await expect(
-      withBridgeLaunch(
-        runtime,
-        createScriptedEchoLaunch({
-          modulePath: join(tmpDir, "nonexistent-bridge.mjs"),
-        }),
-      ).ensureProvider({ providerId: "fake" }),
-    ).rejects.toThrow(/exited unexpectedly[\s\S]*Cannot find module/);
+    const started = withBridgeLaunch(
+      runtime,
+      createScriptedEchoLaunch({
+        modulePath: join(tmpDir, "nonexistent-bridge.mjs"),
+      }),
+    ).ensureProvider({ providerId: "fake" });
+    await expect(started).rejects.toThrow(
+      /exited unexpectedly[\s\S]*Cannot find module/,
+    );
+    await expect(started).rejects.toMatchObject({
+      code: "provider_process_exited",
+    });
     await runtime.shutdown();
   });
 

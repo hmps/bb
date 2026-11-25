@@ -157,12 +157,7 @@ export function registerFileRoutes(app: Hono, deps: AppDeps): void {
     if (problem === null) {
       return;
     }
-    throw new ApiError(
-      problem.status,
-      problem.status === 403 ? "forbidden_origin" : "unsupported_media_type",
-      problem.error,
-      false,
-    );
+    throw new ApiError(problem.status, problem.code, problem.error, false);
   };
 
   for (const route of [
@@ -270,7 +265,8 @@ export function registerFileRoutes(app: Hono, deps: AppDeps): void {
         timeoutMs: COMMAND_TIMEOUT_MS,
         command: {
           type: "host.list_paths",
-          path: payload.path,
+          rootPaths: [payload.path],
+          followRootSymlink: false,
           limit: payload.limit ?? HOST_FILE_LIST_LIMIT_DEFAULT,
           includeFiles: payload.includeFiles,
           includeDirectories: payload.includeDirectories,

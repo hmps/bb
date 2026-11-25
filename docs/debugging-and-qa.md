@@ -490,23 +490,15 @@ are exact, so the test does not depend on machine speed. A path that grows by
 design, such as fork copying history or turn details returning the whole turn,
 declares it per axis and may grow at most linearly.
 
-The `agentCpuPriority` experiment (Settings → Experiments) keeps bb responsive
-when agents saturate the CPU:
+bb lowers agent CPU priority so it stays responsive when agents saturate the
+CPU:
 
-- While it is on, the host daemon sets nice 10 (the below-normal priority
-  class on Windows) on provider processes and environment lifecycle scripts as
-  they start, and the builds and tests they launch inherit it. The server
-  sends the value in the session handshake and in
-  `provider-session-policy.replace`, but a toggle takes effect only after
-  restarting bb: a running provider bridge worker keeps the priority it started
-  with while it serves new threads, and a lowered process cannot be raised
-  again. Terminals keep normal priority.
+- The host daemon sets nice 10 (the below-normal priority class on Windows) on
+  provider processes and environment lifecycle scripts as they start, and the
+  builds and tests they launch inherit it. Terminals keep normal priority.
 - On macOS, where the scheduler ignores nice between processes, the launcher
   spawns the server and daemon through `/usr/sbin/taskpolicy -a` (application
-  scheduling, not inherited by their children). The launcher reads the value
-  from `<data dir>/agent-cpu-priority.json` at each spawn, so this half takes
-  effect after restarting bb. The server and the daemon both rewrite that file
-  when the value changes; a missing or unreadable file means off. Check with
+  scheduling, not inherited by their children). Check with
   `ps -axo pid,ppid,pri,ni,command`: the server and daemon show `PRI` 46,
   their children 31.
 
@@ -618,9 +610,13 @@ cannot acquire the app's origin privileges. HTML also carries the no-store
 policy, at any size; the app renders an HTML iframe only for files up
 to 5 MiB and shows larger HTML as source or, past 25 MB, as a Download.
 
-The server uses `host.read_file_chunk` for a metadata-only probe (`length: 0`),
-then reads at most 64 KiB per RPC, keeping up to 16 RPCs in flight ahead of
-the HTTP consumer. The daemon returns each chunk's bytes as a binary WebSocket
+The server's first `host.read_file_chunk` returns the file's metadata together
+with its first 64 KiB, so a file up to 64 KiB takes one daemon round trip. That
+read sends the revisions named in `If-None-Match` as `knownRevisions`; when the
+file still has one of them, the daemon returns no bytes and the server answers
+`304`. HEAD, `If-None-Match: *`, and ranges that do not start at byte 0 make the
+first read metadata-only (`length: 0`). Later reads take at most 64 KiB per RPC,
+keeping up to 16 RPCs in flight ahead of the HTTP consumer. The daemon returns each chunk's bytes as a binary WebSocket
 frame (a 4-byte header length, the JSON frame, then the raw bytes) instead of
 base64 inside JSON. HEAD, `304`, and `416` responses read no contents.
 Cancelling, aborting, or a failed chunk stops subsequent reads and aborts the
@@ -1353,11 +1349,14 @@ applied chunk.
 
 The server passes `host.read_workspace_agent_context` its project skill read
 policy: at most 1,000 non-hidden, non-excluded directories, 10 MiB per
-`SKILL.md`, and 32 MiB of JSON-encoded content in total (directory metadata,
-shared skill discovery, and workspace instructions do not count). These are a
-starting policy, not a measured requirement or transport ceiling. Files over a
-limit are skipped with server warnings; smaller later files can still fit, and
-count truncation is reported separately. Only exact-case `SKILL.md` files are
+`SKILL.md`, and 4 MiB of JSON-encoded frontmatter in total (directory metadata,
+shared skill discovery, and workspace instructions do not count). The daemon
+returns each `SKILL.md` only through its closing `---` delimiter, never the
+body; the server parses that block exactly as it would the whole file, because
+injected project skills reach the provider by path. These are a starting
+policy, not a measured requirement or transport ceiling. Files over a limit are
+skipped with server warnings; smaller later files can still fit, and count
+truncation is reported separately. Only exact-case `SKILL.md` files are
 read; symlinked skill directories or files and roots escaping the workspace are
 skipped before reading. Command lookup sets `includeAgentInstructions: false`,
 so an invalid `.bb/AGENTS.md` cannot break the command catalog; turn
@@ -1454,26 +1453,23 @@ values receive the original CSS, so a tab retained across a server update
 keeps working with its old host styles. Compressed responses are cached
 separately for the original and stripped variants.
 
-The app also adds `css-scope=owned-root-v1`. When a plugin's `app.js` never
-sets `data-bb-plugin-root` without a nearby `data-bb-plugin`, both routes drop
-the `[data-bb-plugin-root]:not([data-bb-plugin])` alternative from that
-plugin's utility selectors; otherwise the plugin keeps the original CSS, and
-`bb plugin build` warns. Authored CSS is never rewritten.
-
-With the `keyedPluginCss` experiment on, the app sends
-`css-scope=plugin-attribute-v1` instead. For the same bundles, the routes also
-key utility selectors on `[data-bb-plugin-scope-<id>]` instead of
-`[data-bb-plugin=<id>]`. Browsers' ancestor filters hash attribute names but
-not values, so only a per-plugin attribute name lets the browser skip another
-plugin's copy of `.flex` without walking every ancestor of each element inside
-the sidebar, composer, or any other plugin root. Plugin roots the host renders
-(slot mounts, panel header content, and portaled overlays) carry
-`data-bb-plugin-scope-<id>=""` next to `data-bb-plugin`. For elements a plugin
-labels itself, including old `portal-scope` copies and
-`element.dataset.bbPlugin = id`, the app watches the document
-(`apps/app/src/lib/plugin-scope-attributes.ts`) and adds the attribute before
-the element is styled. Tabs that send `owned-root-v1` or no scope get the
-variants above.
+The app also adds `css-scope=plugin-attribute-v1`. When a plugin's `app.js`
+never sets `data-bb-plugin-root` without a nearby `data-bb-plugin`, both routes
+drop the `[data-bb-plugin-root]:not([data-bb-plugin])` alternative from that
+plugin's utility selectors and key them on `[data-bb-plugin-scope-<id>]`
+instead of `[data-bb-plugin=<id>]`; otherwise the plugin keeps the original
+CSS, and `bb plugin build` warns. Authored CSS is never rewritten. Browsers'
+ancestor filters hash attribute names but not values, so only a per-plugin
+attribute name lets the browser skip another plugin's copy of `.flex` without
+walking every ancestor of each element inside the sidebar, composer, or any
+other plugin root. Plugin roots the host renders (slot mounts, panel header
+content, and portaled overlays) carry `data-bb-plugin-scope-<id>=""` next to
+`data-bb-plugin`. For elements a plugin labels itself, including old
+`portal-scope` copies and `element.dataset.bbPlugin = id`, the app watches the
+document (`apps/app/src/lib/plugin-scope-attributes.ts`) and adds the
+attribute before the element is styled. Older tabs that send
+`css-scope=owned-root-v1` get the same selectors without the scope attribute,
+and tabs that send no scope get the original CSS.
 
 To reproduce version skew, load the production main app in Chrome, restart
 the same isolated server on the branch without reloading the tab, and open

@@ -322,6 +322,10 @@
       "type": "registry:ui"
     },
     {
+      "name": "settings-section",
+      "type": "registry:ui"
+    },
+    {
       "name": "shared-resize-observer",
       "type": "registry:lib"
     },
@@ -427,6 +431,10 @@
     },
     {
       "name": "use-reorder-dnd",
+      "type": "registry:ui"
+    },
+    {
+      "name": "use-scroll-overflow-state",
       "type": "registry:ui"
     },
     {
