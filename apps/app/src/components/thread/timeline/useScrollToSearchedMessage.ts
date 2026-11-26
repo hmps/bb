@@ -136,6 +136,24 @@ function findDeepestContainingRow(
   return null;
 }
 
+function findDeferredContainingRowPath(
+  rows: readonly SeqAnchoredRow[],
+  seq: number,
+): SeqAnchoredRow[] | null {
+  for (const row of rows) {
+    if (!containsSeq(row, seq)) {
+      continue;
+    }
+    const nestedRows = getNestedRows(row);
+    if (nestedRows === null) {
+      return [row];
+    }
+    const nestedPath = findDeferredContainingRowPath(nestedRows, seq);
+    return nestedPath === null ? null : [row, ...nestedPath];
+  }
+  return null;
+}
+
 function mergeSeqRange(left: SeqRange | null, right: SeqRange): SeqRange {
   if (left === null) {
     return right;
@@ -220,7 +238,8 @@ export function collectSearchedMessageAncestorRowIds(
     return new Set(messagePath.map((row) => row.id));
   }
   if (match === "message") {
-    return new Set();
+    const deferredPath = findDeferredContainingRowPath(rows, seq);
+    return new Set(deferredPath?.map((row) => row.id) ?? []);
   }
   const ancestorIds = new Set<string>();
   collectSearchedMessageAncestorRowIdsInRows({ ancestorIds, rows, seq });
@@ -369,11 +388,17 @@ export function useScrollToSearchedMessage(
     targetSeq === null || targetMatch === null
       ? null
       : findSearchTargetRow(rows, targetSeq, targetMatch);
+  const targetDeferredRow =
+    targetLeafRow !== null || targetSeq === null
+      ? null
+      : (findDeferredContainingRowPath(rows, targetSeq)?.at(-1) ?? null);
+  const revealRow = targetLeafRow ?? targetDeferredRow;
+  const flashesRevealRow = targetLeafRow !== null;
   const loadedRange = useMemo(() => getRowsSeqRange(rows), [rows]);
   const targetIsOlderThanLoadedRows =
     loadedRange !== null && targetSeq !== null && targetSeq < loadedRange.max;
   const targetIsMissing =
-    targetLeafRow === null &&
+    revealRow === null &&
     loadedRange !== null &&
     (targetMatch === "message" || targetIsOlderThanLoadedRows);
   const canLoadOlderTarget = targetIsOlderThanLoadedRows && hasOlderRows;
@@ -410,7 +435,7 @@ export function useScrollToSearchedMessage(
         return;
       }
     }
-    if (targetLeafRow === null) {
+    if (revealRow === null) {
       const olderLoadAttemptKey =
         loadedRange === null
           ? null
@@ -452,7 +477,7 @@ export function useScrollToSearchedMessage(
       }
       return;
     }
-    const selector = `[data-timeline-row-id="${escapeTimelineRowId(targetLeafRow.id)}"]`;
+    const selector = `[data-timeline-row-id="${escapeTimelineRowId(revealRow.id)}"]`;
     const renderedTarget = document.querySelector<HTMLElement>(selector);
     if (renderedTarget === null) {
       return;
@@ -487,7 +512,7 @@ export function useScrollToSearchedMessage(
       ) {
         handledKeyRef.current = targetLocationKey;
         setSettledLocationKey(targetLocationKey);
-        revealTimelineRow(element, bottomAnchor);
+        revealTimelineRow(element, bottomAnchor, flashesRevealRow);
         return;
       }
       scheduled.frame = requestAnimationFrame(revealTarget);
@@ -500,6 +525,7 @@ export function useScrollToSearchedMessage(
   }, [
     bottomAnchor,
     canLoadOlderTarget,
+    flashesRevealRow,
     isLoadingOlderRows,
     loadedRange,
     onLoadOlderRows,
@@ -511,7 +537,7 @@ export function useScrollToSearchedMessage(
     targetSeq,
     targetThreadId,
     targetIsNotFound,
-    targetLeafRow,
+    revealRow,
     threadId,
   ]);
   return isInitialRevealPending;
