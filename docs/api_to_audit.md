@@ -1604,6 +1604,32 @@ Docs: `backend-sdk.md`, `docs/timeline-pagination.md`.
    about 15 community plugins (amrtawfik160/bb-plugin-firstmate,
    cristoslc/bb-plugin-focus-board, gpambrozio/bb-plugins among them).
 
+## `bb.sdk.threads.experimental_backgroundTasks`
+
+`list({ threadId })` (`GET /threads/:id/background-tasks`) returns
+`{ backgroundTasks: { itemId, taskType, description, taskStatus, stoppable }[] }`
+for the thread's open `backgroundTask` items, read with the targeted open-item
+query the dangling-task settlement uses. `stop({ threadId, itemId })`
+(`POST /threads/:id/background-tasks/:itemId/stop`) sends the daemon command
+`thread.background_task.stop`; the runtime resolves the item to the provider's
+`familyId` from its own open-work state and sends the bridge request
+`thread/backgroundTask/stop`. Only items the bridge marked `stoppable: true`
+are accepted (a 409 otherwise, and a 404 once the task is no longer running).
+The result is `complete` when the task has already settled and `in-progress`
+while the provider's stopped notification is still on its way. Core callers:
+the background-commands card's Stop button and `bb thread background-tasks
+list|stop`.
+
+Docs: `backend-sdk.md`, [provider-bridge-protocol.md](provider-bridge-protocol.md).
+
+**Audit before stabilizing.**
+
+1. **Output.** #2572 asks to read a task's live output from the same card.
+   Decide whether that becomes a `read`/`tail` member here (the item already
+   carries `outputFile` on the host) before the shape freezes.
+2. **List fields.** Decide whether callers need `startedAt` and the model of
+   background agents, which the timeline row has and this list omits.
+
 ## `bb.sdk.threads.experimental_listAncestors`
 
 `POST /threads/ancestors` with `{ threadIds }` (1–200 ids) returns
@@ -6069,6 +6095,13 @@ own value, so plugins built against the old constant keep working.
 - **Core callers:** `ThreadSecondaryPanel` provides the value (`TabVisibleContext` in `apps/app/src/components/secondary-panel/tab-visibility.ts`) around every pane's tab content, the one host for thread views, plugin pages and the New thread screen; `experimental_useTabVisible` reads that context. The Git plugin's Diff tab pauses its file list, patch and Viewed reads with it, as core's Diff did on `isDiffPanelLive`. Tests: `ThreadSecondaryPanel.tabVisible.test.tsx` and the panel-controller contract table case "reports the shown tab visible only while the side panel is open".
 - **Other callers:** about 8 community plugins (ahsan7162/bb-plugin-dashboards, AndrewBird81/bb-plugin-code-review-workspace, gpambrozio/bb-plugins among them).
 - **Stabilization:** behaviour in split panes and the compact drawer, and whether a not-yet-realized drawer should report false. Then rename project-wide and remove this entry.
+
+## Lazy components (`experimental_lazy`, `ExperimentalLazyComponent`)
+
+- **Surface:** `experimental_lazy<T extends ComponentType<any>>(load: () => Promise<{ default: T }>): ExperimentalLazyComponent<ComponentProps<T>>` on `@get-bb/plugin-sdk/app`, the same loader shape as `React.lazy`. The result is a component function to pass straight to a slot's `component` field.
+- **Behavior:** the component's code loads from its own chunk. bb downloads and evaluates it on the preload tier once startup settles (after plugin frontends load), so a later first render is synchronous. Stacking hosts (Info rows and sections, context card rows and sections, context segments, the rail, settings, setup-guide and homepage sections, thread header rows) reveal an entry only once every entry above it is ready and hold entries below a loading one for at most 3 seconds; after that they show what is ready, and the late entry is inserted in its place when it arrives, which can move the entries below it once. The hosts find lazy components through `PLUGIN_APP_COMPONENT_FIELDS` (`packages/plugin-sdk/src/internal/plugin-app-component-fields.ts`), the typed list of component fields every slot kind declares. Lazy parts the restored screen shows (a plugin's settings sections on its settings page, its nav panel on its own page, a thread's open right-panel tab, or the Info tab's rows and sections) start loading as soon as their plugin registers, and a plugin named by one fetches its lazy chunks with its entry; a plugin's own page or settings page publishes once the parts it shows load, bounded by the same 3 seconds. Download failures retry twice (500 ms, 1.5 s); a final failure crashes the slot into `onCrash`. `bb plugin build` writes each dynamic import as a chunk under `dist/chunks/`, makes each dynamic import start the host-loaded runtime slots its chunk needs (such as the diff viewer) together with the chunk download, and stamps `artifactFormatVersion: 2`, which older bb versions refuse. The test harness loads the chunk when `experimental_lazy` is called. Docs: frontend-registration.md ("Loading a surface's code when it first renders"), quickstart.md; app internals in [ui-code-splitting.md](ui-code-splitting.md).
+- **Core callers:** `lazyComponent` in `apps/app/src/lib/lazy-component.tsx` is the one implementation: `pluginSdkAppImplementation` serves it to plugin bundles and `apps/app/src/lib/core-plugin-sdk-app.ts` binds it for core contributions. It is a `defineSplit` preload-tier split registered in `apps/app/src/lib/lazy-parts.ts`, whose `useOrderedReveal` every stacking host uses. Core contribution caller: `apps/app/src/core-contributions/thread-outline.tsx` (the rail outline), whose lazy part the thread route starts alongside the thread view through `apps/app/src/lib/core-contribution-parts.ts`. Bundled plugin callers: Git (Diff tab, commit dialog), Automations (panel, thread Info section), Account Pooler and bb connect (settings and setup-guide sections). Tests: `lazy-parts.test.tsx`, `plugin-app-component-fields.test.ts`, `plugin-frontend-load-order.test.ts`, `build-plugin-app.test.ts`, `plugin-app-bundle.test.ts`, `plugin-update.test.ts`.
+- **Stabilization:** whether the 3-second bound should differ per host and whether hosts should show a placeholder while they hold. Then rename project-wide and remove this entry.
 
 ## Thread context segments (`app.slots.experimental_threadContextSegment` / `experimental_THREAD_CONTEXT_SEGMENT_GROUPS`)
 

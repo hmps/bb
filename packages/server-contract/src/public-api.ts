@@ -7,6 +7,7 @@ import {
   type MachineEnvironmentList,
 } from "./api/machine-environment.js";
 import {
+  type DesktopQuitStatus,
   machineEnvironmentReplaceSchema,
   recordTelemetryEventRequestSchema,
   setAiServiceSelectionRequestSchema,
@@ -242,6 +243,7 @@ import {
   type ThreadImportResponse,
   type ThreadChildSummaryResponse,
   type ThreadEventWaitQuery,
+  type ThreadStatusWaitQuery,
   type ThreadEventsQuery,
   type ThreadMessageQuery,
   type ThreadMessageResponse,
@@ -381,6 +383,7 @@ import {
   systemAppUpdateApplyRequestSchema,
   systemAppUpdateQuerySchema,
   threadEventWaitQuerySchema,
+  threadStatusWaitQuerySchema,
   threadEventsQuerySchema,
   threadMessageQuerySchema,
   threadGetQuerySchema,
@@ -439,6 +442,7 @@ import {
   type UpdateUiPreferenceRequest,
 } from "./api/ui-preferences.js";
 import type { ApiError } from "./errors.js";
+import type { ThreadBackgroundTasksResponse } from "./api/thread-background-tasks.js";
 
 type PathProjectSourceId = { param: { id: string; sourceId: string } };
 type PathProjectSourceFolderId = {
@@ -447,6 +451,9 @@ type PathProjectSourceFolderId = {
 type PathThreadMessage = { param: { id: string; seq: string } };
 type PathThreadInteractionId = {
   param: { id: string; interactionId: string };
+};
+type PathThreadBackgroundTaskId = {
+  param: { id: string; itemId: string };
 };
 
 export const publicApiRoutes = {
@@ -1693,6 +1700,18 @@ export const publicApiRoutes = {
       request: noRequest<PathId>(),
       response: jsonResponse<OperationResponse>(),
     }),
+    backgroundTasks: defineRoute({
+      path: "/threads/:id/background-tasks",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<ThreadBackgroundTasksResponse>(),
+    }),
+    stopBackgroundTask: defineRoute({
+      path: "/threads/:id/background-tasks/:itemId/stop",
+      method: "post",
+      request: noRequest<PathThreadBackgroundTaskId>(),
+      response: jsonResponse<OperationResponse>(),
+    }),
     open: defineRoute({
       path: "/threads/:id/open",
       method: "post",
@@ -1922,6 +1941,19 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<ThreadEventRow | null>(),
     }),
+    /**
+     * Long-polls for a change that can end a status wait: answers with the
+     * thread as soon as its status is not `notStatus` or its queued messages
+     * change, and with 204 when `waitMs` (at most 60000) passes first.
+     */
+    statusWait: defineRoute({
+      path: "/threads/:id/status/wait",
+      method: "get",
+      request: queryRequest<PathId, ThreadStatusWaitQuery>(
+        threadStatusWaitQuerySchema,
+      ),
+      response: jsonResponse<ThreadResponse | null>(),
+    }),
     defaultExecutionOptions: defineRoute({
       path: "/threads/:id/default-execution-options",
       method: "get",
@@ -2025,6 +2057,12 @@ export const publicApiRoutes = {
       method: "get",
       request: noRequest(),
       response: jsonResponse<SystemMobileAppReleasesResponse>(),
+    }),
+    quitStatus: defineRoute({
+      path: "/system/quit-status",
+      method: "get",
+      request: noRequest(),
+      response: jsonResponse<DesktopQuitStatus>(),
     }),
     config: defineRoute({
       path: "/system/config",

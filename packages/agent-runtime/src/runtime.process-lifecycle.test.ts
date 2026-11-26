@@ -234,7 +234,10 @@ describe("createAgentRuntime process lifecycle", () => {
   });
 
   it("fires onProcessExit when provider crashes", async () => {
-    const exitInfo = vi.fn();
+    const exitInfo = vi.fn<NonNullable<AgentRuntimeOptions["onProcessExit"]>>();
+    const exited = new Promise<AgentRuntimeProcessExitInfo>((resolve) => {
+      exitInfo.mockImplementation(resolve);
+    });
     const runtime = createScriptedEchoRuntime({
       runtime: {
         workspacePath: tmpDir,
@@ -245,14 +248,13 @@ describe("createAgentRuntime process lifecycle", () => {
     });
 
     await runtime.ensureProvider({ providerId: "fake" });
-    await waitForRuntimeState({
-      label: "provider process exit callback",
-      predicate: () => exitInfo.mock.calls.length === 1,
-    });
 
-    expect(exitInfo).toHaveBeenCalledWith(
-      expect.objectContaining({ providerId: "fake", code: 0, expected: false }),
-    );
+    expect(await exited).toMatchObject({
+      providerId: "fake",
+      code: 0,
+      expected: false,
+    });
+    expect(exitInfo).toHaveBeenCalledOnce();
     await runtime.shutdown();
   });
 
@@ -1750,6 +1752,47 @@ describe("createAgentRuntime process lifecycle", () => {
           : null,
       ),
     ).toEqual(["completed"]);
+  });
+
+  it("stops one background task through the provider and leaves the thread running", async () => {
+    const { events, providerThreadId, runtime, startedTask } =
+      await startIdleThreadWithOpenBackgroundTask();
+
+    await expect(
+      runtime.stopBackgroundTask({ threadId: "t1", itemId: "unknown-item" }),
+    ).resolves.toEqual({ stopped: false });
+    await expect(
+      runtime.stopBackgroundTask({
+        threadId: "t1",
+        itemId: startedTask.item.id,
+      }),
+    ).resolves.toEqual({ stopped: true });
+    await waitForRuntimeState({
+      label: "the provider settled the stopped background task",
+      predicate: () => !runtime.hasOpenBackgroundWork(),
+      timeoutMs: 5_000,
+    });
+
+    expect(backgroundTaskCompletions(events)).toEqual([
+      expect.objectContaining({
+        type: "item/backgroundTask/completed",
+        threadId: "t1",
+        providerThreadId,
+        item: expect.objectContaining({
+          id: startedTask.item.id,
+          status: "interrupted",
+          taskStatus: "stopped",
+        }),
+      }),
+    ]);
+    expect(runtime.listRunningProviders()).toEqual(["fake"]);
+    await expect(
+      runtime.stopBackgroundTask({
+        threadId: "t1",
+        itemId: startedTask.item.id,
+      }),
+    ).resolves.toEqual({ stopped: false });
+    await runtime.shutdown();
   });
 
   it("concurrent ensureProvider calls do not spawn duplicate processes", async () => {
