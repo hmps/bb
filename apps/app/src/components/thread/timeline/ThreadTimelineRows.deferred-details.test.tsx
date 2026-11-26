@@ -13,6 +13,7 @@ import {
 } from "@/test/fixtures/thread-timeline-rows";
 import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
 import { sdk } from "@/lib/sdk";
+import { appToast } from "@/components/ui/app-toast";
 import { ThreadTimelineRows } from "./ThreadTimelineRows";
 
 vi.mock("@/lib/sdk", () => ({
@@ -150,6 +151,76 @@ describe("deferred timeline details", () => {
     expect(screen.getByText("Started the dev server.")).toBeTruthy();
     expect(screen.queryByText("Loading turn details...")).toBeNull();
     releaseReload?.();
+  });
+
+  it("expands a folded turn to reveal a linked mid-turn message", async () => {
+    const toastSpy = vi.spyOn(appToast, "message").mockReturnValue("toast-1");
+    const scrollIntoView = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+    try {
+      timelineTurnSummaryDetails.mockResolvedValue({
+        olderCursor: null,
+        rows: [
+          conversationRow({
+            id: "mid-turn-message",
+            sourceSeqEnd: 15,
+            sourceSeqStart: 15,
+            text: "Which branch should I use?",
+            threadId: "thr_main",
+            turnId: "turn_1",
+          }),
+          conversationRow({
+            id: "last-turn-message",
+            sourceSeqEnd: 39,
+            sourceSeqStart: 39,
+            text: "Done.",
+            threadId: "thr_main",
+            turnId: "turn_1",
+          }),
+        ],
+      });
+      const { wrapper: Wrapper } = createQueryClientTestHarness();
+      const { container } = render(
+        <MemoryRouter initialEntries={["/threads/thr_main#msg=15"]}>
+          <Wrapper>
+            <ThreadTimelineRows
+              threadId="thr_main"
+              timelineRows={[
+                turnRow({
+                  id: "turn_1",
+                  sourceSeqEnd: 40,
+                  sourceSeqStart: 10,
+                  threadId: "thr_main",
+                  turnId: "turn_1",
+                }),
+              ]}
+              threadRuntimeDisplayStatus="idle"
+            />
+          </Wrapper>
+        </MemoryRouter>,
+      );
+
+      expect(
+        await screen.findByText("Which branch should I use?"),
+      ).toBeTruthy();
+      await vi.waitFor(() => {
+        const target = container.querySelector(
+          '[data-timeline-row-id="mid-turn-message"]',
+        );
+        expect(target?.classList.contains("bb-search-flash")).toBe(true);
+      });
+      expect(
+        container
+          .querySelector('[data-timeline-row-id="turn_1"]')
+          ?.classList.contains("bb-search-flash"),
+      ).toBe(false);
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(toastSpy).not.toHaveBeenCalled();
+    } finally {
+      toastSpy.mockRestore();
+      scrollIntoView.mockRestore();
+    }
   });
 
   it("loads earlier turn activity only when asked", async () => {
